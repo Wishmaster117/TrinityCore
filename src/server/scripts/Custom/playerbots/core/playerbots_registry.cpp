@@ -90,6 +90,17 @@ namespace Playerbots
         return true;
     }
 
+    bool Registry::SetPaused(ObjectGuid botGuid, bool paused)
+    {
+        auto it = _entries.find(botGuid);
+        if (it == _entries.end())
+            return false;
+
+        it->second.Paused = paused;
+        return true;
+    }
+
+
     bool Registry::SetFollowing(Unit* unit, bool following)
     {
         if (!unit)
@@ -105,6 +116,16 @@ namespace Playerbots
             return false;
 
         it->second.Following = following;
+        return true;
+    }
+
+    bool Registry::SetLeaderGuid(ObjectGuid botGuid, ObjectGuid leaderGuid)
+    {
+        auto it = _entries.find(botGuid);
+        if (it == _entries.end())
+            return false;
+
+        it->second.LeaderGuid = leaderGuid;
         return true;
     }
 }

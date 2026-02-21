@@ -23,10 +23,13 @@
 void AddSC_playerbots_mvp();
 void AddSC_playerbots_chat();
 void AddSC_playerbots_group();
+void AddSC_playerbots_lifecycle_script();
+
 void AddCustomScripts()
 {
     // This is where custom scripts should be added.
     AddSC_playerbots_mvp();
     AddSC_playerbots_chat();
     AddSC_playerbots_group();
+    AddSC_playerbots_lifecycle_script();
 }

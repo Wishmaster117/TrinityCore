@@ -17,6 +17,7 @@
 #include "Unit.h"
 
 #include "playerbots_registry.h"
+#include "playerbots/core/movement/playerbots_follow_controller.h"
 #include "playerbots/ai/PlayerbotAI.h"
 #include "playerbots/movement/playerbots_movement.h"
 #include "playerbots/formation/playerbots_formation.h"
@@ -43,6 +44,52 @@ namespace Playerbots
 
     static std::unordered_map<ObjectGuid, Formation::Type> _formationByLeader;
     static std::unordered_map<ObjectGuid, std::unique_ptr<AI::PlayerbotAI>> _aiByBot;
+
+    void Manager::OnMasterAvailable(Player* master)
+    {
+        if (!master)
+            return;
+
+        ObjectGuid masterGuid = master->GetGUID();
+        auto const& entries = Registry::Instance().GetEntries();
+
+        for (auto const& [botGuid, entry] : entries)
+        {
+            if (entry.LeaderGuid != masterGuid)
+                continue;
+
+            Player* bot = ObjectAccessor::FindPlayer(botGuid);
+            if (!bot)
+                continue;
+
+            Registry::Instance().SetPaused(bot, false);
+            Registry::Instance().SetFollowing(bot, true);
+        }
+    }
+
+    void Manager::OnMasterUnavailable(Player* master)
+    {
+        if (!master)
+            return;
+
+        OnMasterUnavailable(master->GetGUID());
+    }
+
+    void Manager::OnMasterUnavailable(ObjectGuid masterGuid)
+    {
+        auto const& entries = Registry::Instance().GetEntries();
+
+        for (auto const& [botGuid, entry] : entries)
+        {
+            if (entry.LeaderGuid != masterGuid)
+                continue;
+
+            // Release even if bot is offline/unloaded.
+            Registry::Instance().SetFollowing(botGuid, false);
+            Registry::Instance().SetPaused(botGuid, false);
+            Registry::Instance().SetLeaderGuid(botGuid, ObjectGuid::Empty);
+        }
+    }
 
     Manager& Manager::Instance()
     {
@@ -158,6 +205,15 @@ namespace Playerbots
         if (!_enabled)
             return;
 
+        // Follow tuning (kept local to manager for now).
+        FollowTuning tuning;
+        tuning.BaseDist = _followDistance;
+        tuning.BaseAngle = _followAngle;
+        tuning.Deadzone = 0.35f;
+        tuning.ResyncDist = _followDistance * 2.0f;
+        tuning.TeleportDist = 60.0f;
+        tuning.UpdateMs = 250;
+
         _accumulated += diff;
         if (_accumulated < _tickMs)
             return;
@@ -246,45 +302,57 @@ namespace Playerbots
             if (ai && ai->IsInCombat())
                 continue;
 
-            float dist = botPlayer->GetDistance(leader);
-            float stopDist = _followDistance * _stopDistanceFactor;
+            // If following is enabled for this bot, keep a stable Follow movement generator running.
+            // Headless player movement can otherwise degrade into walk/run catch-up cycles.
+            if (!entry.Following)
+                continue;
 
-            // Too far => ensure follow
-            if (dist > _followDistance)
+            // If not on same map/instance: bring bot to leader (headless-safe teleport),
+            // then next tick FollowController will take over.
+            if (botPlayer->GetMapId() != leader->GetMapId() || botPlayer->GetInstanceId() != leader->GetInstanceId())
             {
-                if (!entry.Following)
-                    Registry::Instance().SetFollowing(botGuid, true);
-
-                // Stable per-leader index: build it from sorted GUIDs (MVP, few units).
-                uint32 idx = 0;
-                uint32 total = 1;
-                {
-                    // gather all bots for this leader and sort by guid to have deterministic indices
-                    std::vector<ObjectGuid> group;
-                    group.reserve(8);
-                    for (auto const& [g, e] : entries)
-                        if (e.LeaderGuid == entry.LeaderGuid)
-                            group.push_back(g);
-                    std::sort(group.begin(), group.end());
-                    total = uint32(group.size());
-                    auto it = std::find(group.begin(), group.end(), botGuid);
-                    if (it != group.end())
-                        idx = uint32(std::distance(group.begin(), it));
-                }
-
-                Formation::Type formation = GetFormationFor(entry.LeaderGuid);
-                // Use configured follow distance as formation base distance.
-                Formation::FollowParams fp = Formation::Compute(formation, _followDistance, _followAngle, idx, total, botGuid);
-                Movement::Follow(botPlayer, leader, fp.Dist, fp.Angle);
+                (void)Playerbots::Movement::TeleportNear(botPlayer, leader);
                 continue;
             }
 
-            // Only stop if leader is not moving; otherwise we get stop/start jitter.
-            if (dist <= stopDist && entry.Following && !leader->isMoving())
+            float dist = botPlayer->GetDistance(leader);
+            // Resync threshold: avoid re-issuing MoveFollow every tick (it causes stop/run jitter).
+            // We only recompute formation / refresh follow when the bot is significantly too far.
+            float const resyncDist = _followDistance * 1.5f;
+
+            // Match walk/run state with leader to avoid falling behind.
+            // (In WoW, holding W is "run"; "walk" is a separate toggle.)
+            botPlayer->SetWalk(leader->IsWalking());
+
+            // Only (re)issue MoveFollow when needed (don't spam it every tick).
+            bool const isFollowMotion = (botPlayer->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE);
+            bool const needResync = dist > resyncDist;
+            if (isFollowMotion && !needResync)
+                continue;
+
+            // Stable per-leader index: build it from sorted GUIDs to have deterministic indices.
+            uint32 idx = 0;
+            uint32 total = 1;
             {
-                Movement::Stop(botPlayer);
-                Registry::Instance().SetFollowing(botGuid, false);
+                std::vector<ObjectGuid> group;
+                group.reserve(8);
+                for (auto const& [g, e] : entries)
+                    if (e.LeaderGuid == entry.LeaderGuid)
+                        group.push_back(g);
+
+                std::sort(group.begin(), group.end());
+                total = uint32(group.size());
+
+                auto it = std::find(group.begin(), group.end(), botGuid);
+                if (it != group.end())
+                    idx = uint32(std::distance(group.begin(), it));
             }
+
+            Formation::Type formation = GetFormationFor(entry.LeaderGuid);
+            Formation::FollowParams fp = Formation::Compute(formation, _followDistance, _followAngle, idx, total, botGuid);
+
+            // Use point-follow controller for smooth movement.
+            FollowController::Instance().Update(botPlayer, leader, fp.Dist, fp.Angle, tuning);
         }
 
         TC_LOG_DEBUG("playerbots", "Playerbots: tick ({}ms) entries={}", _tickMs, uint32(entries.size()));

@@ -42,8 +42,12 @@ namespace Playerbots
         RegistryEntry* GetEntry(ObjectGuid botGuid);
 
         bool SetPaused(Unit* unit, bool paused);
+        bool SetPaused(ObjectGuid botGuid, bool paused);
+
         bool SetFollowing(Unit* unit, bool following);
         bool SetFollowing(ObjectGuid botGuid, bool following);
+
+        bool SetLeaderGuid(ObjectGuid botGuid, ObjectGuid leaderGuid);
 
     private:
         std::unordered_map<ObjectGuid, RegistryEntry> _entries;

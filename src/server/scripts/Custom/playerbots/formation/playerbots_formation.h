@@ -31,7 +31,10 @@ namespace Playerbots::Formation
     struct FollowParams
     {
         float Dist = 2.0f;
-        float Angle = 0.0f; // radians relative to leader (0 = behind in TC MoveFollow convention)
+        // Angle is in TC MoveFollow convention:
+        // 0 = behind the leader, PI = in front of the leader.
+        // If you use WorldObject::GetClosePoint, convert via (Angle + PI).
+        float Angle = 0.0f;
     };
 
     char const* ToString(Type type);

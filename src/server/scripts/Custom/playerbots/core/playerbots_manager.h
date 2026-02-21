@@ -11,6 +11,9 @@
 #define PLAYERBOTS_MANAGER_H
 
 #include "Define.h"
+#include <cstdint>
+
+class Player;
 
 namespace Playerbots::Formation { enum class Type : uint8; }
 
@@ -36,6 +39,11 @@ namespace Playerbots
         void SetFollowAngle(float angle);
 
         uint32 GetCommandMinIntervalMs() const;
+
+        // Lifecycle hooks (called by scripts) to auto-attach/detach bots on login/logout/group changes.
+        void OnMasterAvailable(Player* master);
+        void OnMasterUnavailable(Player* master);
+        void OnMasterUnavailable(ObjectGuid masterGuid);
 
         Formation::Type GetFormationFor(ObjectGuid leaderGuid) const;
         void SetFormationFor(ObjectGuid leaderGuid, Formation::Type type);
