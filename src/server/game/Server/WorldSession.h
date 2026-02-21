@@ -984,6 +984,11 @@ class TC_GAME_API WorldSession
 
         bool IsAddonRegistered(std::string_view prefix) const;
 
+        // Headless bot sessions (no real client socket).
+        // Used by the Playerbots module to disable pointless packet sending + log spam.
+        void SetHeadlessBotSession(bool enable) { _isHeadlessBotSession = enable; }
+        bool IsHeadlessBotSession() const { return _isHeadlessBotSession; }
+
         void SendPacket(WorldPacket const* packet, bool forced = false);
 
         void SendNotification(char const* format, ...) ATTR_PRINTF(2, 3);
@@ -1970,6 +1975,9 @@ class TC_GAME_API WorldSession
         ObjectGuid::LowType m_GUIDLow;                      // set logined or recently logout player (while m_playerRecentlyLogout set)
         Player* _player;
         std::array<std::shared_ptr<WorldSocket>, MAX_CONNECTION_TYPES> m_Socket;
+        // True only for playerbots headless sessions created by the module.
+        bool _isHeadlessBotSession = false;
+
         std::string m_Address;                              // Current Remote Address
      // std::string m_LAddress;                             // Last Attempted Remote Adress - we can not set attempted ip for a non-existing session!
 

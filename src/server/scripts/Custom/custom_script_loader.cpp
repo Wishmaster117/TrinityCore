@@ -19,6 +19,14 @@
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
+// This is where custom scripts' loading functions should be declared.
+void AddSC_playerbots_mvp();
+void AddSC_playerbots_chat();
+void AddSC_playerbots_group();
 void AddCustomScripts()
 {
+    // This is where custom scripts should be added.
+    AddSC_playerbots_mvp();
+    AddSC_playerbots_chat();
+    AddSC_playerbots_group();
 }

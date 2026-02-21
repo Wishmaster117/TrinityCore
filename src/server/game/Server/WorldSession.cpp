@@ -253,7 +253,14 @@ void WorldSession::SendPacket(WorldPacket const* packet, bool forced /*= false*/
 
     if (!m_Socket[conIdx])
     {
-        TC_LOG_ERROR("network.opcode", "Prevented sending of {} to non existent socket {} to {}", GetOpcodeNameForLogging(static_cast<OpcodeServer>(packet->GetOpcode())), uint32(conIdx), GetPlayerInfo());
+        // For headless bot sessions, there is never a real client socket.
+        // Avoid log spam and avoid work inside the network stack for packets that cannot be delivered.
+        if (IsHeadlessBotSession())
+            return;
+
+        TC_LOG_ERROR("network.opcode",
+            "Prevented sending of {} to non existent socket {} to {}",
+            GetOpcodeNameForLogging(static_cast<OpcodeServer>(packet->GetOpcode())), uint32(conIdx), GetPlayerInfo());
         return;
     }
 

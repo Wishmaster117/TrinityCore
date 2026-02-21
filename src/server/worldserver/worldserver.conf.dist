@@ -4358,3 +4358,152 @@ Load.Locales = 1
 
 #
 ###################################################################################################
+
+###################################################################################################
+# PLAYERBOTS.RANDOMBOTS (BOOTSTRAP ACCOUNTS / CHARACTERS POOLS)
+#
+# Controls automatic creation/management of RandomBots accounts and optionally characters.
+###################################################################################################
+
+#
+#    Playerbots.RandomBots.Enable
+#        Description: Enables RandomBots bootstrap logic.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+
+Playerbots.RandomBots.Enable = 1
+
+#
+#    Playerbots.RandomBots.AccountPrefix
+#        Description: Prefix used for auto-created accounts.
+#        Default:     "rndbot"
+#
+
+Playerbots.RandomBots.AccountPrefix = "rndbot"
+
+#
+#    Playerbots.RandomBots.AccountCount
+#        Description: Number of accounts to use/create for RandomBots.
+#        Important:   If set to 0, the value is auto-derived from MaxRandomBots / CharactersPerAccount.
+#        Default:     0
+#
+
+Playerbots.RandomBots.AccountCount = 0
+
+#
+#    Playerbots.RandomBots.MaxRandomBots
+#        Description: Target maximum number of random bots (used by the bootstrap sizing logic).
+#        Default:     500
+#
+
+Playerbots.RandomBots.MaxRandomBots = 500
+
+#
+#    Playerbots.RandomBots.AddClassAccountPoolSize
+#        Description: Reserved "addclass" account pool size.
+#        Default:     5
+#
+
+Playerbots.RandomBots.AddClassAccountPoolSize = 5
+
+#
+#    Playerbots.RandomBots.RandomPassword
+#        Description: Password generation mode for auto-created accounts.
+#        Default:     0 - (Password = username)
+#                     1 - (Random password)
+#
+
+Playerbots.RandomBots.RandomPassword = 0
+
+#
+#    Playerbots.RandomBots.RandomPasswordLength
+#        Description: Random password length when RandomPassword = 1.
+#        Default:     10
+#
+
+Playerbots.RandomBots.RandomPasswordLength = 10
+
+#
+#    Playerbots.RandomBots.DeleteAccounts
+#        Description: Deletes all accounts matching AccountPrefix at server startup.
+#        Important:   DANGEROUS. This is destructive and cannot be undone.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+#
+
+Playerbots.RandomBots.DeleteAccounts = 0
+
+#
+#    Playerbots.RandomBots.CreateCharacters
+#        Description: Automatically creates characters for RandomBots accounts.
+#        Important:   Requires the `playerbots_names` table to be populated.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+
+Playerbots.RandomBots.CreateCharacters = 1
+
+#
+#    Playerbots.RandomBots.CharactersPerAccount
+#        Description: Number of characters to create per account when CreateCharacters = 1.
+#        Default:     10
+#
+
+Playerbots.RandomBots.CharactersPerAccount = 10
+
+#
+#    Playerbots.RandomBots.CreateCharactersMaxAttemptsPerChar
+#        Description: Maximum number of creation attempts per character.
+#                     Each failed attempt reserves a new name from `playerbots_names`
+#                     and retries with a different name.
+#        Notes:       This prevents startup failures when a name is already taken
+#                     (unique index on `characters.name`) or when character creation
+#                     / DB save fails transiently.
+#        Default:     10
+#
+#        Values:      1 - 100 (recommended: 5 - 20)
+#
+
+Playerbots.RandomBots.CreateCharactersMaxAttemptsPerChar = 10
+
+###################################################################################################
+# Playerbots.RandomBots - Level distribution / spawning (MVP)
+###################################################################################################
+#
+# Level range for generated random bots.
+# NOTE: Bots are created in the database pool; the in-world "spawn" is a separate step.
+#
+
+Playerbots.RandomBots.LevelMin = 1
+Playerbots.RandomBots.LevelMax = 70
+
+#
+# Level distribution bias (percentages).
+# - ChanceMinLevelPct: probability to force bots at MinLevel.
+# - ChanceMaxLevelPct: probability to force bots at MaxLevel.
+# Remaining probability is distributed in-between (uniform or bracket-based, depending on mode).
+#
+# Valid range: 0..100
+# Rule: ChanceMinLevelPct + ChanceMaxLevelPct must be <= 100.
+#
+
+Playerbots.RandomBots.LevelChanceMinPct = 25
+Playerbots.RandomBots.LevelChanceMaxPct = 5
+
+#
+# Level 1 starting experience choice.
+# Some modern cores/data sets support multiple "start modes" (e.g. racial start vs Exile's Reach).
+# If the core/database does not provide alternate start data, this setting is ignored and default starts are used.
+#
+# Valid range: 0..100
+#
+
+Playerbots.RandomBots.Level1.UseNPEChancePct = 50
+
+# If enabled, non-level-1 bots will be relocated using `playerbots_spawn_hubs` rows
+Playerbots.RandomBots.UseSpawnHubs = 1
+
+Playerbots.RandomBots.AutoSpawnEnable = 1
+Playerbots.RandomBots.AutoSpawnDelayMs = 2000
+Playerbots.RandomBots.AutoSpawnBatchPerTick = 10
