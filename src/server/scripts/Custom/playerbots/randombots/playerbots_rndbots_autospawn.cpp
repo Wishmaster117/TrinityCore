@@ -19,13 +19,36 @@
 
 #include "playerbots/core/playerbots_spawner.h"
 #include "playerbots/core/playerbots_bot_store.h"
+#include "playerbots/randombots/playerbots_rndbots_forbidden_maps.h"
 
+#include <string>
 #include <vector>
 
 namespace Playerbots::RandomBots
 {
     namespace
     {
+        static std::string BuildNotInSql(std::unordered_set<uint32> const& ids)
+        {
+            if (ids.empty())
+                return {};
+
+            // Build a stable SQL "NOT IN" list (digits only). Order does not matter for correctness.
+            std::string out;
+            out.reserve(ids.size() * 6);
+
+            bool first = true;
+            for (uint32 id : ids)
+            {
+                if (!first)
+                    out += ",";
+                first = false;
+                out += std::to_string(id);
+            }
+
+            return out;
+        }
+
         class RandomBotsAutoSpawnWorldScript final : public WorldScript
         {
         public:
@@ -66,6 +89,8 @@ namespace Playerbots::RandomBots
                     _enabled = false;
                     return;
                 }
+
+                _forbiddenMaps = ForbiddenMaps::Parse(sConfigMgr->GetStringDefault("Playerbots.RandomBots.AutoSpawnForbiddenMaps", ""));
 
                 // Safety recovery: if the server crashed previously, bots might be stuck as online in DB.
                 // Reset only our random bots.
@@ -195,23 +220,55 @@ namespace Playerbots::RandomBots
                 // We rely on characters position fields already set by bootstrap:
                 // - level 1: normal spawn or Exile's Reach via createMode/NPE
                 // - level > 1: spawn hubs already applied into characters row
+                std::string notInList = _forbiddenMaps.NotInSql;
+                std::string mapFilterSql;
+                if (!notInList.empty())
+                    mapFilterSql = fmt::format(" AND c.map NOT IN ({})", notInList);
+
+                // If we filter maps, fetch more rows to still try to reach _target.
+                // Hard cap to avoid huge queries on large pools.
+                uint32 queryLimit = _target;
+                if (!_forbiddenMaps.Ids.empty())
+                    queryLimit = std::min<uint32>(_target * 10u, 10000u);
+
                 QueryResult r = CharacterDatabase.Query(fmt::format(
-                    "SELECT b.guid "
+                    "SELECT b.guid, c.map "
                     "FROM playerbots_bots b "
                     "JOIN characters c ON c.guid=b.guid "
-                    "WHERE b.bot_type=1 AND b.owner_guid=0 AND c.online=0 "
+                    "WHERE b.bot_type=1 AND b.owner_guid=0 AND c.online=0{} "
                     "ORDER BY b.guid ASC "
                     "LIMIT {}",
-                    _target).c_str());
+                    mapFilterSql, queryLimit).c_str());
 
                 if (!r)
                     return;
 
-                do
+ 
+               uint32 skippedForbidden = 0;
+               do
                 {
-                    uint32 guidLow = r->Fetch()[0].GetUInt32();
+                    Field* f = r->Fetch();
+                    uint32 guidLow = f[0].GetUInt32();
+                    uint32 mapId = f[1].GetUInt32();
+
+                    if (_forbiddenMaps.IsForbidden(mapId))
+                    {
+                        ++skippedForbidden;
+                        continue;
+                    }
+
                     _queue.push_back(ObjectGuid::Create<HighGuid::Player>(guidLow));
+
+                    if (_queue.size() >= _target)
+                        break;
                 } while (r->NextRow());
+
+                if (!_forbiddenMaps.Ids.empty())
+                {
+                    TC_LOG_INFO("server.loading",
+                        "Playerbots.RandomBots: AutoSpawn forbidden maps filter active: forbiddenCount={} skipped={} queued={}/{}",
+                        uint32(_forbiddenMaps.Ids.size()), skippedForbidden, uint32(_queue.size()), _target);
+                }
             }
 
             bool _enabled = false;
@@ -221,6 +278,8 @@ namespace Playerbots::RandomBots
 
             std::vector<ObjectGuid> _queue;
             size_t _index = 0;
+
+            ForbiddenMaps _forbiddenMaps;
         };
     }
 }

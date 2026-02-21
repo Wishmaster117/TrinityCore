@@ -4502,8 +4502,29 @@ Playerbots.RandomBots.LevelChanceMaxPct = 5
 Playerbots.RandomBots.Level1.UseNPEChancePct = 50
 
 # If enabled, non-level-1 bots will be relocated using `playerbots_spawn_hubs` rows
+
 Playerbots.RandomBots.UseSpawnHubs = 1
+ 
+#
+# AutoSpawn (headless bots in-world)
+# Note: bots are created in the DB pool first; AutoSpawn is the step that actually logs them in and
+# places them into the world at the position stored in `characters` (map/position_x/y/z/orientation).
+#
 
 Playerbots.RandomBots.AutoSpawnEnable = 1
 Playerbots.RandomBots.AutoSpawnDelayMs = 2000
 Playerbots.RandomBots.AutoSpawnBatchPerTick = 10
+
+#
+# Maps where headless bots must NOT be auto-spawned.
+# This is useful if your dataset is incomplete for some instances/expansions (missing VMAP/MMAP/DB2),
+# or if you want to restrict bots to "safe" worlds only.
+#
+# Format: a list of map IDs separated by commas/semicolons/spaces.
+# Examples:
+#   Playerbots.RandomBots.AutoSpawnForbiddenMaps = 1498,1676,1822
+#   Playerbots.RandomBots.AutoSpawnForbiddenMaps = 648 654 860
+#
+# Default: empty (no restriction)
+#
+Playerbots.RandomBots.AutoSpawnForbiddenMaps = 1676,1481,1822

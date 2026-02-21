@@ -38,6 +38,8 @@
 #include <string>
 #include <vector>
 
+#include "playerbots/randombots/playerbots_rndbots_forbidden_maps.h"
+
 namespace Playerbots::RandomBots
 {
     namespace
@@ -67,6 +69,10 @@ namespace Playerbots::RandomBots
         // TrinityCore default realm character slots per account.
         constexpr uint32 kMaxCharsPerAccount = 10;
         constexpr uint8  kAccountTypeRandom  = 1;
+
+        // Shared config: forbidden maps list (used for both creation and autospawn).
+        // Key kept as requested (English): Playerbots.RandomBots.AutoSpawnForbiddenMaps
+        static ForbiddenMaps gForbiddenMaps;
 
         static bool TableExistsInCharacters(char const* tableName)
         {
@@ -174,10 +180,16 @@ namespace Playerbots::RandomBots
             if (!TableExistsInCharacters("playerbots_spawn_hubs"))
                 return {};
 
+            std::string notInSql = gForbiddenMaps.NotInSql;
+            std::string forbidSql;
+            if (!notInSql.empty())
+                forbidSql = fmt::format(" AND map NOT IN ({})", notInSql);
+
             QueryResult result = CharacterDatabase.Query(fmt::format(
                 "SELECT map, x, y, z, o, areaId FROM playerbots_spawn_hubs "
-                "WHERE teamId={} AND level_min<={} AND level_max>={} ORDER BY RAND() LIMIT 1",
-                uint32(teamId), uint32(level), uint32(level)).c_str());
+                "WHERE teamId={} AND level_min<={} AND level_max>={}{} "
+                "ORDER BY RAND() LIMIT 1",
+                uint32(teamId), uint32(level), uint32(level), forbidSql).c_str());
 
             if (!result)
                 return {};
@@ -740,6 +752,16 @@ namespace Playerbots::RandomBots
             if (!newChar->Create(guidLow, createInfo.get()))
                 return false;
 
+            // If the initial create map is forbidden, abort BEFORE any DB write.
+            // This prevents populating the DB with bots on blacklisted instances/unknown maps.
+            if (gForbiddenMaps.IsForbidden(newChar->GetMapId()))
+            {
+                TC_LOG_WARN("server.loading",
+                    "Playerbots.RandomBots: aborting creation of '{}' (acc={} guid={}) because create map {} is forbidden by config.",
+                    name, accountId, uint32(guidLow), uint32(newChar->GetMapId()));
+                return false;
+            }
+
             if (level > 1)
             {
                 // Minimal leveling (gear/talents handled in later milestones).
@@ -774,6 +796,15 @@ namespace Playerbots::RandomBots
                 uint8 teamId = uint8(newChar->GetTeamId());
                 if (Optional<SpawnHub> hub = PickSpawnHubFor(teamId, level))
                 {
+                    // Defensive: even though hubs are filtered, keep a hard check here.
+                    if (gForbiddenMaps.IsForbidden(uint32(hub->MapId)))
+                    {
+                        TC_LOG_WARN("server.loading",
+                            "Playerbots.RandomBots: aborting creation of '{}' (acc={} guid={}) because chosen hub map {} is forbidden by config.",
+                            name, accountId, uint32(guidLow), uint32(hub->MapId));
+                        return false;
+                    }
+
                     // DB-only relocation (no MapManager/Map API usage).
                     // This compiles across TC variants and avoids relying on map helpers during bootstrap.
                     CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
@@ -963,7 +994,16 @@ namespace Playerbots::RandomBots
         bool randomPwd = sConfigMgr->GetBoolDefault("Playerbots.RandomBots.RandomPassword", false);
         uint32 pwdLen = sConfigMgr->GetIntDefault("Playerbots.RandomBots.RandomPasswordLength", 10);
         bool deleteAccounts = sConfigMgr->GetBoolDefault("Playerbots.RandomBots.DeleteAccounts", false);
-		
+
+        // Load forbidden maps once (shared with autospawn key, intentional).
+        gForbiddenMaps = ForbiddenMaps::Parse(sConfigMgr->GetStringDefault("Playerbots.RandomBots.AutoSpawnForbiddenMaps", ""));
+        if (!gForbiddenMaps.Ids.empty())
+        {
+            TC_LOG_INFO("server.loading",
+                "Playerbots.RandomBots: forbidden maps loaded for creation/spawn: count={}",
+                uint32(gForbiddenMaps.Ids.size()));
+        }
+
         // Used both for account sizing and for character creation.
         uint32 perAccount = sConfigMgr->GetIntDefault("Playerbots.RandomBots.CharactersPerAccount", 10);
         if (perAccount > kMaxCharsPerAccount)
