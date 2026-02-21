@@ -10,10 +10,12 @@
 #include "playerbots/chat/handlers/pb_handler.h"
 
 #include "Chat.h"
+#include "Log.h"
 #include "Player.h"
 #include "WorldSession.h"
 
 #include "playerbots/core/playerbots_grouping.h"
+#include "playerbots/movement/playerbots_movement.h"
 
 namespace Playerbots::PB
 {
@@ -26,7 +28,19 @@ namespace Playerbots::PB
 
         if (EnsureGroupedAndOwned(bot, master))
         {
+            // Hard proof the code path is reached even if loggers are filtered.
             ChatHandler(master->GetSession()).PSendSysMessage("Playerbots: %s joined your group.", bot->GetName().c_str());
+
+             // Teleport (best-effort). If it fails, logs will tell why.
+             bool tpOk = Playerbots::Movement::TeleportNear(bot, master);
+             if (tpOk)
+                ChatHandler(master->GetSession()).PSendSysMessage("Playerbots: %s teleported to you.", bot->GetName().c_str());
+            else
+                ChatHandler(master->GetSession()).PSendSysMessage("Playerbots: teleport of %s failed.", bot->GetName().c_str());
+ 
+             TC_LOG_INFO("playerbots", "Playerbots: join command handled: master={} bot={} tpOk={}",
+                 master->GetGUID().ToString(), bot->GetGUID().ToString(), tpOk);
+
             return HandlerResult::HandledOk;
         }
 

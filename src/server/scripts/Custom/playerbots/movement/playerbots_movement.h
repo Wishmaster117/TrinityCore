@@ -20,6 +20,10 @@ namespace Playerbots
         void Follow(Unit* follower, Player* leader, float dist = 2.0f, float angle = 0.0f);
         void Unfollow(Unit* unit);
         void Stop(Unit* unit);
+
+        // Teleport bot near master (best-effort, safe).
+        // Returns true if TeleportTo succeeded.
+        bool TeleportNear(Player* bot, Player* master, float dist = 2.0f, float angle = 3.14159265f);
     }
 }
 

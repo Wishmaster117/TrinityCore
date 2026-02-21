@@ -17,6 +17,7 @@
 
 #include "playerbots/core/playerbots_bot_store.h"
 #include "playerbots/core/playerbots_grouping.h"
+#include "playerbots/movement/playerbots_movement.h"
 
 namespace
 {
@@ -105,8 +106,19 @@ public:
             TC_LOG_INFO("playerbots", "Playerbots: auto-accepted group invite for bot {}.", invited->GetName());
 
             // Bind ownership to current group leader so chat commands work immediately.
-            if (Player* leader = ObjectAccessor::FindPlayer(group->GetLeaderGUID()))
+            Player* leader = ObjectAccessor::FindPlayer(group->GetLeaderGUID());
+            if (leader)
+            {
                 Playerbots::EnsureGroupedAndOwned(invited, leader);
+
+                // Teleport the bot near the leader immediately after joining.
+                // Note: this uses direct Relocate (not NearTeleportTo) because headless bots
+                // have no socket and can't send the CMSG_MOVE_TELEPORT_ACK that retail TC requires.
+                bool tpOk = Playerbots::Movement::TeleportNear(invited, leader);
+                TC_LOG_INFO("playerbots",
+                    "Playerbots: bot {} joined group, teleport result={}",
+                    invited->GetName(), tpOk);
+            }
         }
     }
 

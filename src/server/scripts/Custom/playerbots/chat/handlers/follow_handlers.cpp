@@ -14,6 +14,7 @@
 #include "WorldSession.h"
 
 #include "playerbots/core/playerbots_registry.h"
+#include "playerbots/core/playerbots_manager.h"
 #include "playerbots/movement/playerbots_movement.h"
 
 namespace Playerbots::PB
@@ -26,7 +27,10 @@ namespace Playerbots::PB
     {
         Registry::Instance().SetPaused(bot, false);
         Registry::Instance().SetFollowing(bot, true);
-        Movement::Follow(bot, master);
+        // Apply runtime-configured follow distance/angle immediately.
+        float dist = Playerbots::Manager::Instance().GetFollowDistance();
+        float angle = Playerbots::Manager::Instance().GetFollowAngle();
+        Movement::Follow(bot, master, dist, angle);
         ChatHandler(master->GetSession()).PSendSysMessage("Playerbots: %s -> follow.", bot->GetName().c_str());
         return HandlerResult::HandledOk;
     }

@@ -273,13 +273,14 @@ namespace Playerbots
                 }
 
                 Formation::Type formation = GetFormationFor(entry.LeaderGuid);
-                Formation::FollowParams fp = Formation::Compute(formation, 2.0f, _followAngle, idx, total, botGuid);
+                // Use configured follow distance as formation base distance.
+                Formation::FollowParams fp = Formation::Compute(formation, _followDistance, _followAngle, idx, total, botGuid);
                 Movement::Follow(botPlayer, leader, fp.Dist, fp.Angle);
                 continue;
             }
 
-            // Close enough => stop following (stay where it is)
-            if (dist <= stopDist && entry.Following)
+            // Only stop if leader is not moving; otherwise we get stop/start jitter.
+            if (dist <= stopDist && entry.Following && !leader->isMoving())
             {
                 Movement::Stop(botPlayer);
                 Registry::Instance().SetFollowing(botGuid, false);
