@@ -75,6 +75,71 @@ namespace Playerbots::AI::Combat
             return false;
         }
 
+        static bool HasInterruptEffect(SpellInfo const* spellInfo)
+        {
+            if (!spellInfo)
+                return false;
+
+            for (SpellEffectInfo const& eff : spellInfo->GetEffects())
+            {
+                if (eff.Effect == SPELL_EFFECT_INTERRUPT_CAST)
+                    return true;
+            }
+            return false;
+        }
+
+        static bool HasDispelEffect(SpellInfo const* spellInfo)
+        {
+            if (!spellInfo)
+                return false;
+
+            for (SpellEffectInfo const& eff : spellInfo->GetEffects())
+            {
+                if (eff.Effect == SPELL_EFFECT_DISPEL || eff.Effect == SPELL_EFFECT_DISPEL_MECHANIC)
+                    return true;
+            }
+            return false;
+        }
+
+        static bool HasAnyAuraApply(SpellInfo const* spellInfo)
+        {
+            if (!spellInfo)
+                return false;
+
+            for (SpellEffectInfo const& eff : spellInfo->GetEffects())
+            {
+                if (eff.IsAura())
+                    return true;
+            }
+            return false;
+        }
+
+        static bool HasCrowdControlAura(SpellInfo const* spellInfo)
+        {
+            if (!spellInfo)
+                return false;
+
+            for (SpellEffectInfo const& eff : spellInfo->GetEffects())
+            {
+                if (!eff.IsAura())
+                    continue;
+
+                switch (eff.ApplyAuraName)
+                {
+                    case SPELL_AURA_MOD_STUN:
+                    case SPELL_AURA_MOD_FEAR:
+                    case SPELL_AURA_MOD_ROOT:
+                    case SPELL_AURA_MOD_CONFUSE:
+                    case SPELL_AURA_MOD_PACIFY:
+                    case SPELL_AURA_MOD_SILENCE:
+                        return true;
+                    default:
+                        break;
+                }
+            }
+            return false;
+        }
+
         static bool HasTauntEffect(SpellInfo const* spellInfo)
         {
             if (!spellInfo)
@@ -105,6 +170,42 @@ namespace Playerbots::AI::Combat
             return range > 6.0f;
         }
 
+        static bool IsUsableAoeOffensiveSpell(SpellInfo const* info, Player* caster)
+        {
+            if (!info || !caster)
+                return false;
+
+            if (info->IsPassive() || info->IsPositive())
+                return false;
+
+            // AOE: SpellInfo helper exists in your TC (SpellInfo::IsTargetingArea()).
+            if (!info->IsTargetingArea())
+                return false;
+
+            if (!HasDirectDamageEffect(info) && !HasPeriodicDamageAura(info))
+                return false;
+
+            // Prefer ranged/targeted AOEs (avoid melee bucket).
+            float range = info->GetMaxRange(false, caster, nullptr);
+            return range > 6.0f;
+        }
+
+        static bool IsUsableInterruptSpell(SpellInfo const* info)
+        {
+            if (!info || info->IsPassive())
+                return false;
+
+            return HasInterruptEffect(info);
+        }
+
+        static bool IsUsableDispelSpell(SpellInfo const* info)
+        {
+            if (!info || info->IsPassive())
+                return false;
+
+            return HasDispelEffect(info);
+        }
+
         // Instant-ish melee abilities (rogue/war/etc.). We keep this conservative:
         // - range <= 6y (melee-ish)
         // - offensive with damage/dot
@@ -129,6 +230,44 @@ namespace Playerbots::AI::Combat
                 return false;
 
             return true;
+        }
+
+        // Buff = positive aura application, not a heal, not a dispel.
+        static bool IsUsableBuffSpell(SpellInfo const* info, Player* caster)
+        {
+            if (!info || !caster)
+                return false;
+
+            if (info->IsPassive())
+                return false;
+
+            if (!info->IsPositive())
+                return false;
+
+            if (HasHealingEffect(info))
+                return false;
+
+            if (HasDispelEffect(info))
+                return false;
+
+            if (!HasAnyAuraApply(info))
+                return false;
+
+            // Must have a real range (self buffs are ok too).
+            float range = info->GetMaxRange(true, caster, nullptr);
+            return range >= 0.0f;
+        }
+
+        static bool IsUsableCrowdControlSpell(SpellInfo const* info)
+        {
+            if (!info || info->IsPassive())
+                return false;
+
+            // CC are generally non-positive and apply control auras.
+            if (info->IsPositive())
+                return false;
+
+            return HasCrowdControlAura(info);
         }
 
         static bool IsUsableHealSpell(SpellInfo const* info, Player* caster)

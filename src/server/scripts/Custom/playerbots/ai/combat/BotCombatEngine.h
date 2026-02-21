@@ -4,6 +4,9 @@
 #include "Player.h"
 #include "Group.h"
 #include "ObjectAccessor.h"
+#include "CellImpl.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "Spell.h"
 #include "SpellHistory.h"
 #include "SpellInfo.h"
@@ -60,6 +63,67 @@ namespace Playerbots::AI::Combat
                 return;
             }
 
+            // Phase 2 order:
+            // 1) Interrupt 2) Dispel 3) Buff 4) AOE 5) Heal (then melee/ranged DPS)
+
+            // 1) Interrupt if victim is casting.
+            if (_catalog.HasInterrupts() && victim->IsNonMeleeSpellCast(false))
+            {
+                if (TryCastBestFromList(bot, victim, _catalog.GetInterrupts(), 3))
+                {
+                    _castAttemptCooldownMs = kCastAttemptCooldownMs;
+                    return;
+                }
+            }
+
+            // 2) Dispel bot/master/group if possible.
+            if (_catalog.HasDispels())
+            {
+                if (TryDispel(bot, master))
+                {
+                    _castAttemptCooldownMs = kCastAttemptCooldownMs;
+                    return;
+                }
+            }
+
+            // 3) Buffs (self/master/group if missing).
+            if (_catalog.HasBuffs())
+            {
+                if (TryBuff(bot, master))
+                {
+                    _castAttemptCooldownMs = kCastAttemptCooldownMs;
+                    return;
+                }
+            }
+
+            // 4) AOE if enough enemies around.
+            if (_catalog.HasAoe())
+            {
+                uint32 nearby = CountNearbyEnemies(bot, 10.0f);
+                if (nearby >= 3)
+                {
+                    if (TryCastBestFromList(bot, victim, _catalog.GetAoe(), 4))
+                    {
+                        _castAttemptCooldownMs = kCastAttemptCooldownMs;
+                        return;
+                    }
+                }
+            }
+
+            // 4.5) Opportunistic CC (very conservative).
+            if (_catalog.HasCrowdControls())
+            {
+                // If bot is in trouble and the victim is targeting the bot, try CC.
+                if (bot->HealthBelowPct(40) && victim->GetVictim() == bot)
+                {
+                    if (TryCastBestFromList(bot, victim, _catalog.GetCrowdControls(), 3))
+                    {
+                        _castAttemptCooldownMs = kCastAttemptCooldownMs;
+                        return;
+                    }
+                }
+            }
+
             // 0) Taunt if we can and someone else is tanking the victim (basic aggro help).
             if (_catalog.HasTaunts())
             {
@@ -105,7 +169,7 @@ namespace Playerbots::AI::Combat
                 }
             }
 
-            // 1) Heals (self/master/group lowest HP).
+            // 5) Heal (self/master/group lowest HP).
             if (_catalog.HasHeals())
             {
                 Unit* healTarget = SelectGroupHealTarget(bot, master);
@@ -116,7 +180,7 @@ namespace Playerbots::AI::Combat
                 }
             }
 
-            // 2) Melee abilities if we are in melee range (rogue/war/etc).
+            // DPS fallback: melee abilities then ranged offense.
             if (_catalog.HasMelee() && bot->IsWithinMeleeRange(victim))
             {
                 if (TryCastBestFromList(bot, victim, _catalog.GetMelee(), 6))
@@ -170,6 +234,146 @@ namespace Playerbots::AI::Combat
             ctx.IsMoving = bot->isMoving();
             ctx.BotNeedsHeal = bot->HealthBelowPct(60);
             ctx.MasterNeedsHeal = master->HealthBelowPct(70);
+        }
+
+        static uint32 CountNearbyEnemies(Player* bot, float radius)
+        {
+            if (!bot)
+                return 0;
+
+            std::list<Unit*> targets;
+            Trinity::AnyUnfriendlyUnitInObjectRangeCheck check(bot, bot, radius);
+            Trinity::UnitListSearcher<Trinity::AnyUnfriendlyUnitInObjectRangeCheck> searcher(bot, targets, check);
+            Cell::VisitAllObjects(bot, searcher, radius);
+
+            // remove non-attackable junk
+            targets.remove_if([bot](Unit* u)
+            {
+                return !u || !u->IsAlive() || !bot->IsValidAttackTarget(u);
+            });
+
+            return uint32(targets.size());
+        }
+
+        static bool HasAuraFromSpellChain(Unit* target, uint32 spellId)
+        {
+            if (!target || !spellId)
+                return false;
+
+            uint32 first = sSpellMgr->GetFirstSpellInChain(spellId);
+            if (!first)
+                first = spellId;
+
+            for (uint32 id = first; id; id = sSpellMgr->GetNextSpellInChain(id))
+            {
+                if (target->HasAura(id))
+                    return true;
+            }
+
+            return false;
+        }
+
+        bool TryDispel(Player* bot, Player* master)
+        {
+            if (!_catalog.HasDispels() || !bot || !master || !bot->GetMap())
+                return false;
+
+            Difficulty diff = Difficulty(bot->GetMap()->GetDifficultyID());
+
+            // Candidate targets: bot, master, group.
+            std::vector<Player*> friends;
+            friends.push_back(bot);
+            friends.push_back(master);
+
+            if (Group* g = master->GetGroup())
+            {
+                for (Group::MemberSlot const& slot : g->GetMemberSlots())
+                {
+                    if (slot.guid.IsEmpty())
+                        continue;
+                    if (Player* member = ObjectAccessor::FindPlayer(slot.guid))
+                        friends.push_back(member);
+                }
+            }
+
+            for (uint32 dispelSpellId : _catalog.GetDispels())
+            {
+                SpellInfo const* dispelInfo = sSpellMgr->GetSpellInfo(dispelSpellId, diff);
+                if (!dispelInfo)
+                    continue;
+
+                uint32 dispelMask = dispelInfo->GetDispelMask();
+                if (!dispelMask)
+                    continue;
+
+                for (Player* target : friends)
+                {
+                    if (!target || !target->IsAlive())
+                        continue;
+
+                    DispelChargesList dispelList;
+                    target->GetDispellableAuraList(bot, dispelMask, dispelList);
+                    if (dispelList.empty())
+                        continue;
+
+                    if (VerifySpellCast(bot, dispelSpellId, target))
+                    {
+                        uint32 rank = ResolveHighestKnownRank(bot, dispelSpellId);
+                        if (rank)
+                        {
+                            bot->CastSpell(target, rank, false);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        bool TryBuff(Player* bot, Player* master)
+        {
+            if (!_catalog.HasBuffs() || !bot || !master)
+                return false;
+
+            std::vector<Player*> friends;
+            friends.push_back(bot);
+            friends.push_back(master);
+
+            if (Group* g = master->GetGroup())
+            {
+                for (Group::MemberSlot const& slot : g->GetMemberSlots())
+                {
+                    if (slot.guid.IsEmpty())
+                        continue;
+                    if (Player* member = ObjectAccessor::FindPlayer(slot.guid))
+                        friends.push_back(member);
+                }
+            }
+
+            for (uint32 buffSpellId : _catalog.GetBuffs())
+            {
+                for (Player* target : friends)
+                {
+                    if (!target || !target->IsAlive())
+                        continue;
+
+                    if (HasAuraFromSpellChain(target, buffSpellId))
+                        continue;
+
+                    if (!VerifySpellCast(bot, buffSpellId, target))
+                        continue;
+
+                    uint32 rank = ResolveHighestKnownRank(bot, buffSpellId);
+                    if (!rank)
+                        continue;
+
+                    bot->CastSpell(target, rank, false);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         static Unit* SelectGroupHealTarget(Player* bot, Player* master)
