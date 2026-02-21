@@ -106,6 +106,11 @@ namespace Playerbots::AI
                         break;
                     }
 
+                    // Phase 3.2.1: Off-tank may pick a secondary target (add) when master is MT.
+                    Unit* combatVictim = _combat.SelectCombatVictim(bot, master, victim);
+                    if (!combatVictim || !combatVictim->IsAlive())
+                        combatVictim = victim;
+
                     // Minimal combat assist: chase + melee auto-attack on master's victim.
                     // 1) Movement:
                     // - If bot has ranged offense, keep distance (avoid "glue to target").
@@ -114,20 +119,21 @@ namespace Playerbots::AI
                     {
                         float dist = _combat.GetPreferredRangedDistance();
                         // Keep within casting range but not in melee.
-                        bot->GetMotionMaster()->MoveChase(victim, dist);
+                        if (dist > 0.0f)
+                            bot->GetMotionMaster()->MoveChase(combatVictim, dist);
                     }
                     else
                     {
-                        if (!bot->IsWithinMeleeRange(victim))
-                            bot->GetMotionMaster()->MoveChase(victim);
+                        if (!bot->IsWithinMeleeRange(combatVictim))
+                            bot->GetMotionMaster()->MoveChase(combatVictim);
                     }
 
                     // 2) Ensure auto-attack is enabled.
-                    if (bot->GetVictim() != victim)
-                        bot->Attack(victim, true);
+                    if (bot->GetVictim() != combatVictim)
+                        bot->Attack(combatVictim, true);
 
                     // 3) Generic spellcasting engine (spellbook-driven, conservative validation).
-                    _combat.Update(bot, master, victim, diff);
+                    _combat.Update(bot, master, combatVictim, diff);
 
                     break;
                 }

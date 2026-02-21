@@ -159,6 +159,9 @@ namespace Playerbots::AI::Combat
         // "Caster-ish": has any ranged offensive spell candidates.
         bool HasRangedOffense() const { return HasOffensive(); }
 
+        uint32 OffensiveCount() const { return uint32(_offensive.size()); }
+        uint32 HealCount() const { return uint32(_heals.size()); }
+
     private:
         std::vector<uint32> _offensive;
         std::vector<uint32> _melee;
