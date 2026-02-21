@@ -24,6 +24,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Playerbots
 {
@@ -32,6 +33,7 @@ namespace Playerbots
     static uint32 _tickMs = 200;
     static uint32 _accumulated = 0;
     static bool _started = false;
+    static uint32 _gcAccumulated = 0;
 
     static float _followDistance = 10.0f;
     static float _followAngle = 0.0f;
@@ -67,6 +69,15 @@ namespace Playerbots
         _formationByLeader[leaderGuid] = type;
         TC_LOG_INFO("server.loading", "Playerbots: runtime formation for leader {} -> {}",
             leaderGuid.ToString(), Formation::ToString(type));
+    }
+
+    void Manager::OnBotDespawned(ObjectGuid botGuid)
+    {
+        // Drop cached AI state for this bot.
+        _aiByBot.erase(botGuid);
+
+        // If the bot was a leader with a custom formation, drop it.
+        _formationByLeader.erase(botGuid);
     }
 
     void Manager::SetEnabled(bool enabled)
@@ -154,6 +165,43 @@ namespace Playerbots
         _accumulated = 0;
 
         auto const& entries = Registry::Instance().GetEntries();
+
+        // Opportunistic garbage collection:
+        // - Drop cached formations for leaders that are no longer referenced.
+        // - Drop cached AI state for bots that are no longer registered.
+        // This keeps runtime state bounded even if bots are cycled aggressively.
+        _gcAccumulated += elapsed;
+        if (_gcAccumulated >= 30 * IN_MILLISECONDS)
+        {
+            _gcAccumulated = 0;
+
+            std::unordered_set<ObjectGuid> activeBots;
+            std::unordered_set<ObjectGuid> activeLeaders;
+            activeBots.reserve(entries.size());
+            activeLeaders.reserve(entries.size());
+
+            for (auto const& [botGuid, entry] : entries)
+            {
+                activeBots.insert(botGuid);
+                activeLeaders.insert(entry.LeaderGuid);
+            }
+
+            for (auto it = _aiByBot.begin(); it != _aiByBot.end();)
+            {
+                if (activeBots.find(it->first) == activeBots.end())
+                    it = _aiByBot.erase(it);
+                else
+                    ++it;
+            }
+
+            for (auto it = _formationByLeader.begin(); it != _formationByLeader.end();)
+            {
+                if (activeLeaders.find(it->first) == activeLeaders.end())
+                    it = _formationByLeader.erase(it);
+                else
+                    ++it;
+            }
+        }
         for (auto const& [botGuid, entry] : entries)
         {
             if (entry.Paused)

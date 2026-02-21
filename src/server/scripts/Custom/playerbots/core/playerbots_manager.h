@@ -39,6 +39,10 @@ namespace Playerbots
 
         Formation::Type GetFormationFor(ObjectGuid leaderGuid) const;
         void SetFormationFor(ObjectGuid leaderGuid, Formation::Type type);
+
+        // Cleanup hooks
+        // Called when a bot player is despawned and its Player* is deleted.
+        void OnBotDespawned(ObjectGuid botGuid);
     };
 }
 

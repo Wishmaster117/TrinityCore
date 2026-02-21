@@ -160,6 +160,10 @@ namespace Playerbots::RandomBots
 
         static uint8 PickCreateModeForLevel1(uint8 race, uint8 cls)
         {
+            // Hard toggle: allow/disallow using NPE (Exile's Reach) for level 1 bots.
+            if (!sConfigMgr->GetBoolDefault("Playerbots.RandomBots.Level1.AllowNPE", true))
+                return uint8(PlayerCreateMode::Normal);
+
             // TrinityCore: NPE is driven by PlayerInfo::createPositionNPE.
             PlayerInfo const* info = sObjectMgr->GetPlayerInfo(race, cls);
             if (!info || !info->createPositionNPE)
@@ -717,13 +721,18 @@ namespace Playerbots::RandomBots
             // IMPORTANT: Do not force NPE when createPositionNPE is missing (core will fallback anyway, but keep it explicit).
             if (level == 1)
             {
-                PlayerInfo const* info = sObjectMgr->GetPlayerInfo(race, cls);
-                if (info && info->createPositionNPE)
+                // Hard toggle: allow/disallow using NPE (Exile's Reach) for level 1 bots.
+                bool allowNPE = sConfigMgr->GetBoolDefault("Playerbots.RandomBots.Level1.AllowNPE", true);
+                if (allowNPE)
                 {
-                    uint32 chance = sConfigMgr->GetIntDefault("Playerbots.RandomBots.Level1.UseNPEChancePct", 50);
-                    if (chance > 100)
-                        chance = 100;
-                    createInfo->UseNPE = (urand(0, 99) < chance);
+                    PlayerInfo const* info = sObjectMgr->GetPlayerInfo(race, cls);
+                    if (info && info->createPositionNPE)
+                    {
+                        uint32 chance = sConfigMgr->GetIntDefault("Playerbots.RandomBots.Level1.UseNPEChancePct", 50);
+                        if (chance > 100)
+                            chance = 100;
+                        createInfo->UseNPE = (urand(0, 99) < chance);
+					}
                 }
             }
 

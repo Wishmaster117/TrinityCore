@@ -24,6 +24,7 @@
 #include "WorldSession.h"
 
 #include "playerbots/core/playerbots_bot_store.h"
+#include "playerbots/core/playerbots_manager.h"
 
 #include <memory>
 
@@ -425,6 +426,9 @@ namespace Playerbots
         ObjectAccessor::RemoveObject(bot);
 
         // Detach player from session to prevent double-free paths.
+        // Drop cached bot AI / formation state before deleting Player*.
+        Manager::Instance().OnBotDespawned(botGuid);
+
         if (session)
             session->SetPlayer(nullptr);
 
