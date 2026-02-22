@@ -19,6 +19,7 @@
 
 #include <unordered_map>
 #include <functional>
+#include <utility>
 
 namespace Playerbots::PB
 {
@@ -45,15 +46,13 @@ namespace Playerbots::PB
         return ownerLow != 0 && ownerLow == master->GetGUID().GetCounter();
     }
 
-    static void Send(Player* master, char const* fmt, ...)
+    template <typename... Args>
+    static void Send(Player* master, char const* fmt, Args&&... args)
     {
         if (!master || !master->GetSession())
             return;
 
-        va_list args;
-        va_start(args, fmt);
-        ChatHandler(master->GetSession()).PSendSysMessage(fmt, args);
-        va_end(args);
+        ChatHandler(master->GetSession()).PSendSysMessage(fmt, std::forward<Args>(args)...);
     }
 
     static HandlerResult RequireFlaggedBotOwnedOrJoin(Command const& cmd, Player* master, Player* bot, bool allowJoinBootstrap)

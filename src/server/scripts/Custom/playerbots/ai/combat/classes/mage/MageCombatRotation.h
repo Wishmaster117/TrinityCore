@@ -21,6 +21,7 @@ namespace Playerbots::AI::Combat::Rotations
     private:
         MageCombatRotation() = default;
         uint32 SelectGeneric(RotationContext const& ctx) const;
+        uint32 SelectAoeSpell(RotationContext const& ctx) override;
     };
 }
 

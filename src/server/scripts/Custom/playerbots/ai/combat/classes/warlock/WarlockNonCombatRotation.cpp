@@ -1,48 +1,45 @@
-#include "playerbots/ai/combat/classes/mage/MageNonCombatRotation.h"
+#include "playerbots/ai/combat/classes/warlock/WarlockNonCombatRotation.h"
 
 #include "playerbots/ai/combat/rotations/RotationContext.h"
+#include "playerbots/ai/combat/SpellCatalog.h"
 #include "playerbots/ai/combat/noncombat/EatDrinkHelper.h"
 #include "playerbots/ai/combat/noncombat/NonCombatBuffHelper.h"
-#include "playerbots/ai/combat/SpellCatalog.h"
 
 #include "Config.h"
 #include "Player.h"
+#include "Timer.h"
 
 namespace Playerbots::AI::Combat::Rotations
 {
-    MageNonCombatRotation& MageNonCombatRotation::Instance()
+    WarlockNonCombatRotation& WarlockNonCombatRotation::Instance()
     {
-        static MageNonCombatRotation s;
+        static WarlockNonCombatRotation s;
         return s;
     }
 
-    uint32 MageNonCombatRotation::SelectSpell(RotationContext const& ctx)
+    uint32 WarlockNonCombatRotation::SelectSpell(RotationContext const& ctx)
     {
         if (!ctx.Bot)
             return 0;
 
-        // Non-combat rotation should behave like a human: do nothing in combat.
+        // Human-like: do nothing in combat.
         if (ctx.Bot->IsInCombat() || ctx.Bot->GetVictim())
             return 0;
 
-        // 3.3.9: Shared human-like eat/drink (items, safe gating).
-        // If we successfully started eat/drink, return 0 (item use already triggered spell cast).
+        // Shared eat/drink (items, safe gating).
         if (Playerbots::AI::Combat::NonCombat::TryEatDrink(ctx.Bot))
             return 0;
 
-        // 3.4: Class self-only buffs (armor-like), spellbook-driven, no hardcoded IDs.
-        // We keep this conservative: only self-only buffs (range <= 0), and only if missing.
-        if (ctx.Catalog)
-        {
-            if (uint32 selfBuff = ctx.Catalog->BestMissingSelfOnlyBuff(ctx.Bot))
-                return selfBuff;
-        }
+        if (!ctx.Catalog)
+            return 0;
 
-        // 3.4 FINAL: Group-style buffs (master only), spellbook-driven, conservative gating.
-        // We only buff the master to keep behavior human-like and avoid mass rebuff spam.
-        if (ctx.Catalog && ctx.Master && ctx.Master->IsAlive())
+        // Self-only buffs (Demon Armor-like), spellbook-driven.
+        if (uint32 selfBuff = ctx.Catalog->BestMissingSelfOnlyBuff(ctx.Bot))
+            return selfBuff;
+
+        // Master-only group buff (conservative).
+        if (ctx.Master && ctx.Master->IsAlive())
         {
-            // Avoid trying to buff when enemies are close (same safety radius as eat/drink).
             float safeRadius = sConfigMgr->GetFloatDefault("Playerbots.NonCombat.EatDrink.SafeEnemyRadius", 30.0f);
             if (safeRadius < 5.0f) safeRadius = 5.0f;
             if (safeRadius > 80.0f) safeRadius = 80.0f;
@@ -50,18 +47,13 @@ namespace Playerbots::AI::Combat::Rotations
             if (!Playerbots::AI::Combat::NonCombat::HasNearbyHostile(ctx.Bot, safeRadius))
             {
                 uint32 nowMs = getMSTime();
-
-                // Per (bot, master) cooldown to avoid buff spam.
                 if (!Playerbots::AI::Combat::NonCombat::IsOnBuffCooldown(ctx.Bot, ctx.Master, nowMs))
                 {
                     if (uint32 groupBuff = ctx.Catalog->BestMissingGroupBuffForTarget(ctx.Bot, ctx.Master))
                     {
-                        // Short cooldown after proposing a group buff.
                         Playerbots::AI::Combat::NonCombat::SetBuffCooldown(ctx.Bot, ctx.Master, nowMs, 5000);
                         return groupBuff;
                     }
-
-                    // Nothing to buff: backoff anyway to avoid repeated scans.
                     Playerbots::AI::Combat::NonCombat::SetBuffCooldown(ctx.Bot, ctx.Master, nowMs, 3000);
                 }
             }

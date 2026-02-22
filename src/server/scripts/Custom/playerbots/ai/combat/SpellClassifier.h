@@ -170,6 +170,184 @@ namespace Playerbots::AI::Combat
             return range > 6.0f;
         }
 
+        // Shared "safe" filters for spellbook-driven rotations (no hardcoded SpellIDs).
+        // Keeps selection conservative so we prefer falling back to the engine over casting weird spells.
+        static bool IsSafeRangedSingleTargetDirectDamage(SpellInfo const* info, Player* caster, SpellSchoolMask schoolMask)
+        {
+            if (!info || !caster)
+                return false;
+
+            if (info->IsPassive() || info->IsPositive())
+                return false;
+
+            // Avoid ground/area targeting.
+            if (info->IsTargetingArea())
+                return false;
+
+            // Only direct damage spells (MVP).
+            if (!HasDirectDamageEffect(info))
+                return false;
+
+            // Match requested school.
+            if (schoolMask != SPELL_SCHOOL_MASK_NONE && (info->GetSchoolMask() & schoolMask) == 0)
+                return false;
+
+            // Must be ranged (avoid melee abilities).
+            float range = info->GetMaxRange(false, caster, nullptr);
+            if (range <= 6.0f)
+                return false;
+
+            return true;
+        }
+
+        // Conservative cooldown detection for spellbook-driven rotations.
+        // If any recovery timer is set, we treat the spell as having a cooldown.
+        static bool HasAnyCooldown(SpellInfo const* info)
+        {
+            if (!info)
+                return false;
+
+            return (info->RecoveryTime || info->CategoryRecoveryTime || info->StartRecoveryTime);
+        }
+
+        // Safe instant single-target ranged direct damage (proc/finisher-ish) without hardcoded IDs.
+        static bool IsSafeRangedSingleTargetInstantNuke(SpellInfo const* info, Player* caster, SpellSchoolMask schoolMask)
+        {
+            if (!info || !caster)
+                return false;
+
+            if (!IsSafeRangedSingleTargetDirectDamage(info, caster, schoolMask))
+                return false;
+
+            if (info->IsChanneled())
+                return false;
+
+            if (info->CalcCastTime() != 0)
+                return false;
+
+            if (HasAnyCooldown(info))
+                return false;
+
+            return true;
+        }
+
+        // Safe single-target ranged DoT (periodic damage aura), conservative (no channel, no cooldown, no AoE targeting).
+        static bool IsSafeRangedSingleTargetDot(SpellInfo const* info, Player* caster, SpellSchoolMask schoolMask)
+        {
+            if (!info || !caster)
+                return false;
+
+            if (info->IsPassive() || info->IsPositive())
+                return false;
+
+            if (info->IsTargetingArea())
+                return false;
+
+            if (!HasPeriodicDamageAura(info))
+                return false;
+
+            if (schoolMask != SPELL_SCHOOL_MASK_NONE && (info->GetSchoolMask() & schoolMask) == 0)
+                return false;
+
+            float range = info->GetMaxRange(false, caster, nullptr);
+            if (range <= 6.0f)
+                return false;
+
+            if (info->IsChanneled())
+                return false;
+
+            if (HasAnyCooldown(info))
+                return false;
+
+            return true;
+        }
+
+        // Broader than DirectDamage: allows DoTs too (periodic damage aura),
+        // still single-target, ranged, non-AoE targeting, and school-matched.
+        // Conservative "safe" filters: no channel, no cooldown.
+        static bool IsSafeRangedSingleTargetOffensive(SpellInfo const* info, Player* caster, SpellSchoolMask schoolMask)
+        {
+            if (!info || !caster)
+                return false;
+
+            if (info->IsPassive() || info->IsPositive())
+                return false;
+
+            // Avoid ground/area targeting.
+            if (info->IsTargetingArea())
+                return false;
+
+            if (!HasDirectDamageEffect(info) && !HasPeriodicDamageAura(info))
+                return false;
+
+            // Match requested school.
+            if (schoolMask != SPELL_SCHOOL_MASK_NONE && (info->GetSchoolMask() & schoolMask) == 0)
+                return false;
+
+            float range = info->GetMaxRange(false, caster, nullptr);
+            if (range <= 6.0f)
+                return false;
+
+            if (info->IsChanneled())
+                return false;
+
+            if (HasAnyCooldown(info))
+                return false;
+
+            return true;
+        }
+
+        // Safe AOE offensive spell: keep it conservative for rotations.
+        // - must be in the AOE bucket shape
+        // - no channel
+        // - no cooldown
+        // - optional school match
+        static bool IsSafeAoeOffensiveSpell(SpellInfo const* info, Player* caster, SpellSchoolMask schoolMask)
+        {
+            if (!IsUsableAoeOffensiveSpell(info, caster))
+                return false;
+
+            if (info->IsChanneled())
+                return false;
+
+            if (HasAnyCooldown(info))
+                return false;
+
+            if (schoolMask != SPELL_SCHOOL_MASK_NONE && (info->GetSchoolMask() & schoolMask) == 0)
+                return false;
+
+            return true;
+        }
+
+        // "Core nuke" heuristic for spellbook-driven rotations.
+        // Goal: match typical filler nukes (Fireball/Frostbolt/Arcane Blast-like) without hardcoded SpellIDs.
+        //
+        // Conservative filters:
+        // - offensive, direct damage
+        // - single target (not area targeting)
+        // - ranged
+        // - has cast time (>0) and not channeled
+        // - no cooldown (avoid burst CDs as fillers)
+        // - optional school mask match
+        static bool IsLikelyCoreNuke(SpellInfo const* info, Player* caster, SpellSchoolMask schoolMask = SPELL_SCHOOL_MASK_NONE)
+        {
+            if (!IsSafeRangedSingleTargetDirectDamage(info, caster, schoolMask))
+                return false;
+
+            // Prefer fillers that are casted (not instants, not channels).
+            if (info->IsChanneled())
+                return false;
+
+            if (info->CalcCastTime() == 0)
+                return false;
+
+            // Avoid spells with cooldowns (typical nukes have none).
+            if (SpellClassifier::HasAnyCooldown(info))
+                return false;
+
+            return true;
+        }
+
         static bool IsUsableAoeOffensiveSpell(SpellInfo const* info, Player* caster)
         {
             if (!info || !caster)

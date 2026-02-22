@@ -1,7 +1,9 @@
 #ifndef PLAYERBOTS_AI_COMBAT_ROTATIONS_INONCOMBATROTATION_H
 #define PLAYERBOTS_AI_COMBAT_ROTATIONS_INONCOMBATROTATION_H
 
+#pragma once
 #include <cstdint>
+#include "Define.h"
 
 namespace Playerbots::AI::Combat::Rotations
 {

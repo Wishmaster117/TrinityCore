@@ -19,6 +19,13 @@ namespace Playerbots::AI::Combat::Rotations
         SpellCatalog const* Catalog = nullptr;
 
         bool MasterIsTank = false;
+
+        // AOE hinting (filled by BotCombatEngine).
+        // NearbyEnemies is computed with the same radius as the engine AOE phase.
+        uint32 NearbyEnemies = 0;
+
+        // Minimum mobs required to consider AOE (from role settings).
+        uint32 AoeMinTargets = 0;
     };
 }
 

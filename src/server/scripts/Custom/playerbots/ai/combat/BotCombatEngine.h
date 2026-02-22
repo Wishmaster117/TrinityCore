@@ -2,8 +2,11 @@
 #define PLAYERBOTS_AI_COMBAT_BOTCOMBATENGINE_H
 
 #include <array>
+#include <memory>
 #include <list>
+#include <algorithm>
 #include "Config.h"
+#include "Timer.h"
 #include "Player.h"
 #include "Group.h"
 #include "ObjectAccessor.h"
@@ -45,7 +48,7 @@ namespace Playerbots::AI::Combat
 
         void Update(Player* bot, Player* master, Unit* victim, uint32 diff)
         {
-            if (!bot || !master || !victim)
+            if (!bot || !master)
                 return;
 
             Tick(diff);
@@ -69,6 +72,44 @@ namespace Playerbots::AI::Combat
 
             if (_castAttemptCooldownMs > 0)
                 return;
+
+            // ----------------------------------------------------------------
+            // 3.5 FINAL: Non-combat pipeline (works even when victim == nullptr)
+            // ----------------------------------------------------------------
+            bool hasVictim = (victim && victim->IsAlive());
+            bool inCombat = bot->IsInCombat() || bot->GetVictim() || hasVictim;
+
+            if (!inCombat)
+            {
+                // Conservative gates (human-like).
+                if (bot->IsNonMeleeSpellCast(false) || bot->isMoving())
+                {
+                    _castAttemptCooldownMs = 500;
+                    return;
+                }
+
+                Rotations::RotationContext rctx;
+                rctx.Bot = bot;
+                rctx.Master = master;
+                rctx.Victim = nullptr;
+                rctx.Catalog = &_catalog;
+                rctx.MasterIsTank = false;
+                rctx.NearbyEnemies = 0;
+                rctx.AoeMinTargets = 0;
+
+                if (Rotations::INonCombatRotation* rot = Rotations::RotationRegistry::GetNonCombatRotation(bot))
+                {
+                    if (uint32 spellId = rot->SelectSpell(rctx))
+                    {
+                        Unit* castTarget = PickCastTargetForSpell(bot, master, nullptr, spellId);
+                        if (TryCastRotationSpell(bot, spellId, castTarget))
+                            return;
+                    }
+                }
+
+                _castAttemptCooldownMs = 1000;
+                return;
+            }
 
             CombatContext ctx;
             BuildContext(ctx, bot, master, victim);
@@ -121,6 +162,28 @@ namespace Playerbots::AI::Combat
                 uint32 nearby = CountNearbyEnemies(bot, 10.0f);
                 if (nearby >= _settings.AoeMinTargets)
                 {
+                    Rotations::RotationContext rctx;
+                    rctx.Bot = bot;
+                    rctx.Master = master;
+                    rctx.Victim = victim;
+                    rctx.Catalog = &_catalog;
+                    rctx.MasterIsTank = masterIsTank;
+                    rctx.NearbyEnemies = nearby;
+                    rctx.AoeMinTargets = _settings.AoeMinTargets;
+
+                    if (Rotations::ICombatRotation* rot = Rotations::RotationRegistry::GetCombatRotation(bot))
+                    {
+                        if (uint32 aoeSpellId = rot->SelectAoeSpell(rctx))
+                        {
+                            // Rotation may return spells that should be self-cast (core-friendly, no class hardcoding).
+                            // Pick a safe cast target based on SpellInfo (core-friendly, no class hardcoding here).
+                            Unit* castTarget = PickCastTargetForSpell(bot, master, victim, aoeSpellId);
+                            if (TryCastRotationSpell(bot, aoeSpellId, castTarget))
+                                return;
+                        }
+                    }
+                    
+
                     if (TryCastBestFromList(bot, victim, _catalog.GetAoe(), 4))
                     {
                         _castAttemptCooldownMs = kCastAttemptCooldownMs;
@@ -225,29 +288,20 @@ namespace Playerbots::AI::Combat
             }
 
             // Phase 3.3: class rotation hook (per class file, no godfiles).
-            {
-                Rotations::RotationContext rctx;
-                rctx.Bot = bot;
-                rctx.Master = master;
-                rctx.Victim = victim;
-                rctx.Catalog = &_catalog;
-                rctx.MasterIsTank = masterIsTank;
+            Rotations::RotationContext rctx;
+            rctx.Bot = bot;
+            rctx.Master = master;
+            rctx.Victim = victim;
+            rctx.Catalog = &_catalog;
+            rctx.MasterIsTank = masterIsTank;
 
-                if (Rotations::ICombatRotation* rot = Rotations::RotationRegistry::GetCombatRotation(bot))
+            if (Rotations::ICombatRotation* rot = Rotations::RotationRegistry::GetCombatRotation(bot))
+            {
+                if (uint32 spellId = rot->SelectSpell(rctx))
                 {
-                    if (uint32 spellId = rot->SelectSpell(rctx))
-                    {
-                        if (VerifySpellCast(bot, spellId, victim))
-                        {
-                            uint32 rank = ResolveHighestKnownRank(bot, spellId);
-                            if (rank)
-                            {
-                                bot->CastSpell(victim, rank, false);
-                                _castAttemptCooldownMs = kCastAttemptCooldownMs;
-                                return;
-                            }
-                        }
-                    }
+                    Unit* castTarget = PickCastTargetForSpell(bot, master, victim, spellId);
+                    if (TryCastRotationSpell(bot, spellId, castTarget))
+                        return;
                 }
             }
 
@@ -413,24 +467,6 @@ namespace Playerbots::AI::Combat
             return uint32(targets.size());
         }
 
-        static bool HasAuraFromSpellChain(Unit* target, uint32 spellId)
-        {
-            if (!target || !spellId)
-                return false;
-
-            uint32 first = sSpellMgr->GetFirstSpellInChain(spellId);
-            if (!first)
-                first = spellId;
-
-            for (uint32 id = first; id; id = sSpellMgr->GetNextSpellInChain(id))
-            {
-                if (target->HasAura(id))
-                    return true;
-            }
-
-            return false;
-        }
-
         bool TryDispel(Player* bot, Player* master, bool masterIsTank)
         {
             if (!_catalog.HasDispels() || !bot || !master || !bot->GetMap())
@@ -529,7 +565,7 @@ namespace Playerbots::AI::Combat
                     if (!target || !target->IsAlive())
                         continue;
 
-                    if (HasAuraFromSpellChain(target, buffSpellId))
+                    if (_catalog.TargetHasAuraFromSpellChain(target, buffSpellId))
                         continue;
 
                     if (!VerifySpellCast(bot, buffSpellId, target))
@@ -574,8 +610,11 @@ namespace Playerbots::AI::Combat
                     return;
 
                 // Don’t heal tiny scratches; keeps casts useful.
-                if (hp > _settings.HealThresholdPct)
+                // - Never heal above 85%.
+                // - Otherwise honor role threshold (e.g. healer vs dps).
                 if (hp > 85)
+                    return;
+                if (hp > _settings.HealThresholdPct)
                     return;
 
                 best = p;
@@ -628,6 +667,217 @@ namespace Playerbots::AI::Combat
             return knownRank;
         }
 
+        static bool IsSpellKnownAndEnabled(Player* bot, uint32 spellId)
+        {
+            if (!bot || !spellId)
+                return false;
+
+            auto const& spellMap = bot->GetSpellMap();
+            auto it = spellMap.find(spellId);
+            if (it == spellMap.end())
+                return false;
+
+            PlayerSpell const& data = it->second;
+            return (data.state != PLAYERSPELL_REMOVED && !data.disabled);
+        }
+
+        // --------------------------------------------------------------------
+        // Phase 3.3.6 FINAL: fixed-size backoff (no allocations)
+        //
+        // Two layers:
+        // 1) Burst limiter: (bot, spellRank) -> 100ms
+        //    Prevents CPU spikes when the same spell fails across multiple targets rapidly.
+        //
+        // 2) Target backoff: (bot, spellRank, targetGuidLow) -> exponential 500..5000ms
+        //    Prevents per-tick retry spam on a persistently uncastable target (LoS/range/state).
+        //
+        // Implementation:
+        // - Ring buffers with lazy expiry.
+        // - Best-effort: collisions/evictions only reduce backoff effectiveness, never correctness.
+        // --------------------------------------------------------------------
+        struct BackoffSlot
+        {
+            uint64 key = 0;        // 0 => empty
+            uint32 untilMs = 0;    // backoff expiry (ms)
+            uint8 failStreak = 0;  // used for target backoff
+        };
+
+        static constexpr uint32 kBurstSlots = 256;
+        static constexpr uint32 kTargetSlots = 512;
+        static constexpr uint32 kBurstMs = 100;
+
+        static uint64 Mix64(uint64 x)
+        {
+            // SplitMix64 diffusion
+            x += 0x9E3779B97F4A7C15ULL;
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+            return x ^ (x >> 31);
+        }
+
+        static std::array<BackoffSlot, kBurstSlots>& BurstRing()
+        {
+            static std::array<BackoffSlot, kBurstSlots> s_ring{};
+            return s_ring;
+        }
+
+        static std::array<BackoffSlot, kTargetSlots>& TargetRing()
+        {
+            static std::array<BackoffSlot, kTargetSlots> s_ring{};
+            return s_ring;
+        }
+
+        static uint32& BurstCursor()
+        {
+            static uint32 s_cursor = 0;
+            return s_cursor;
+        }
+
+        static uint32& TargetCursor()
+        {
+            static uint32 s_cursor = 0;
+            return s_cursor;
+        }
+
+        static uint64 MakeBurstKey(Player* bot, uint32 spellRank)
+        {
+            // Pack (botGuidLow, spellRank) into 64-bit.
+            return (uint64(bot->GetGUID().GetCounter()) << 32) | uint64(spellRank);
+        }
+
+        static uint64 MakeTargetKey(Player* bot, uint32 spellRank, uint32 targetGuidLow)
+        {
+            // Hash (botGuidLow, spellRank, targetGuidLow) into 64-bit (best-effort).
+            uint64 botLow = uint64(bot->GetGUID().GetCounter());
+            uint64 s = uint64(spellRank);
+            uint64 t = uint64(targetGuidLow);
+            uint64 x = (botLow << 32) ^ (s * 0x9E3779B1u) ^ (t + (t << 16));
+            return Mix64(x);
+        }
+
+        static BackoffSlot* FindSlot(std::array<BackoffSlot, kBurstSlots>& ring, uint64 key, uint32 nowMs)
+        {
+            for (BackoffSlot& s : ring)
+            {
+                if (!s.key)
+                    continue;
+
+                if (s.untilMs <= nowMs)
+                {
+                    s.key = 0;
+                    s.untilMs = 0;
+                    s.failStreak = 0;
+                    continue;
+                }
+
+                if (s.key == key)
+                    return &s;
+            }
+            return nullptr;
+        }
+
+        static BackoffSlot* FindSlot(std::array<BackoffSlot, kTargetSlots>& ring, uint64 key, uint32 nowMs)
+        {
+            for (BackoffSlot& s : ring)
+            {
+                if (!s.key)
+                    continue;
+
+                if (s.untilMs <= nowMs)
+                {
+                    s.key = 0;
+                    s.untilMs = 0;
+                    s.failStreak = 0;
+                    continue;
+                }
+
+                if (s.key == key)
+                    return &s;
+            }
+            return nullptr;
+        }
+
+        static bool IsBurstBlocked(Player* bot, uint32 spellRank, uint32 nowMs)
+        {
+            uint64 key = MakeBurstKey(bot, spellRank);
+            return FindSlot(BurstRing(), key, nowMs) != nullptr;
+        }
+
+        static void BumpBurst(Player* bot, uint32 spellRank, uint32 nowMs)
+        {
+            uint64 key = MakeBurstKey(bot, spellRank);
+            if (BackoffSlot* s = FindSlot(BurstRing(), key, nowMs))
+            {
+                s->untilMs = nowMs + kBurstMs;
+                return;
+            }
+
+            auto& ring = BurstRing();
+            uint32& cur = BurstCursor();
+            BackoffSlot& s = ring[cur % kBurstSlots];
+            cur = (cur + 1) % kBurstSlots;
+
+            s.key = key;
+            s.failStreak = 0;
+            s.untilMs = nowMs + kBurstMs;
+        }
+
+        static void ClearBurst(Player* bot, uint32 spellRank, uint32 nowMs)
+        {
+            uint64 key = MakeBurstKey(bot, spellRank);
+            if (BackoffSlot* s = FindSlot(BurstRing(), key, nowMs))
+            {
+                s->key = 0;
+                s->untilMs = 0;
+                s->failStreak = 0;
+            }
+        }
+
+        static bool IsTargetBlocked(Player* bot, uint32 spellRank, Unit* target, uint32 nowMs)
+        {
+            uint64 key = MakeTargetKey(bot, spellRank, target->GetGUID().GetCounter());
+            return FindSlot(TargetRing(), key, nowMs) != nullptr;
+        }
+
+        static void BumpTarget(Player* bot, uint32 spellRank, Unit* target, uint32 nowMs)
+        {
+            uint64 key = MakeTargetKey(bot, spellRank, target->GetGUID().GetCounter());
+            if (BackoffSlot* s = FindSlot(TargetRing(), key, nowMs))
+            {
+                if (s->failStreak < 10)
+                    ++s->failStreak;
+
+                // 500, 1000, 2000, 4000 then clamp to 5000ms
+                uint8 step = std::min<uint8>(uint8(s->failStreak - 1), 3);
+                uint32 delay = 500u << step;
+                if (delay > 5000u)
+                    delay = 5000u;
+
+                s->untilMs = nowMs + delay;
+                return;
+            }
+
+            auto& ring = TargetRing();
+            uint32& cur = TargetCursor();
+            BackoffSlot& s = ring[cur % kTargetSlots];
+            cur = (cur + 1) % kTargetSlots;
+
+            s.key = key;
+            s.failStreak = 1;
+            s.untilMs = nowMs + 500u;
+        }
+
+        static void ClearTarget(Player* bot, uint32 spellRank, Unit* target, uint32 nowMs)
+        {
+            uint64 key = MakeTargetKey(bot, spellRank, target->GetGUID().GetCounter());
+            if (BackoffSlot* s = FindSlot(TargetRing(), key, nowMs))
+            {
+                s->key = 0;
+                s->untilMs = 0;
+                s->failStreak = 0;
+            }
+        }
+
         static bool VerifySpellCast(Player* bot, uint32 spellId, Unit* target)
         {
             if (!bot || !spellId || !target || !bot->GetMap())
@@ -637,18 +887,45 @@ namespace Playerbots::AI::Combat
             if (!rank)
                 return false;
 
+            // Hard gate: never try to cast removed/disabled spells even if chain resolution returns a rank.
+            if (!IsSpellKnownAndEnabled(bot, rank))
+                return false;
+
+            uint32 nowMs = getMSTime();
+
+            // 3.3.6 FINAL: burst limiter (bot+spell) then target backoff (bot+spell+target).
+            if (IsBurstBlocked(bot, rank, nowMs))
+                return false;
+
+            if (IsTargetBlocked(bot, rank, target, nowMs))
+                return false;
+
             SpellInfo const* info = sSpellMgr->GetSpellInfo(rank, bot->GetMap()->GetDifficultyID());
             if (!info || info->IsPassive())
+                return false;
+
+            if (!target->IsAlive() || !bot->IsAlive())
                 return false;
 
             if (bot->GetSpellHistory()->HasGlobalCooldown(info))
                 return false;
 
             // Conservative validation (range/LOS/state/power/etc).
-            Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
+            std::unique_ptr<Spell> spell = std::make_unique<Spell>(bot, info, TRIGGERED_NONE);
             bool ok = spell->CanAutoCast(target);
-            delete spell;
-            return ok;
+
+            if (!ok)
+            {
+                // Backoff only on CanAutoCast failures (likely LoS/range/state).
+                BumpBurst(bot, rank, nowMs);
+                BumpTarget(bot, rank, target, nowMs);
+                return false;
+            }
+
+            // Castable now -> clear backoffs (best-effort).
+            ClearBurst(bot, rank, nowMs);
+            ClearTarget(bot, rank, target, nowMs);
+            return true;
         }
 
         static bool TryCastBestFromList(Player* bot, Unit* target, std::vector<uint32> const& spells, uint32 maxAttempts)
@@ -682,6 +959,62 @@ namespace Playerbots::AI::Combat
             }
 
             return false;
+        }
+
+        static Unit* PickCastTargetForSpell(Player* bot, Player* master, Unit* victim, uint32 spellId)
+        {
+            if (!bot || !spellId)
+                return victim;
+
+            Unit* castTarget = victim ? victim : bot;
+
+            uint32 rank = ResolveHighestKnownRank(bot, spellId);
+            if (!rank || !bot->GetMap())
+                return castTarget;
+
+            SpellInfo const* info = sSpellMgr->GetSpellInfo(rank, bot->GetMap()->GetDifficultyID());
+            if (!info)
+                return castTarget;
+
+            // Positive spells should not be cast on enemy victims.
+            if (info->IsPositive())
+                return bot;
+
+            // For non-combat: allow "beneficial but not positive flagged" to target master if sensible.
+            // Heuristic kept simple: if spell has range > 0, we can cast it on master (e.g. buffs).
+            if (!victim && master && master->IsAlive())
+            {
+                float range = info->GetMaxRange(true, bot, nullptr);
+                if (range > 0.0f)
+                    return master;
+            }
+
+            // Self-only / no-range spells -> self.
+            float maxRange = info->GetMaxRange(true, bot, nullptr);
+            if (maxRange <= 0.0f)
+                return bot;
+
+            return castTarget ? castTarget : bot;
+        }
+
+        bool TryCastRotationSpell(Player* bot, uint32 spellId, Unit* castTarget)
+        {
+            if (!bot)
+                return false;
+
+            if (!castTarget)
+                castTarget = bot;
+
+            if (!VerifySpellCast(bot, spellId, castTarget))
+                return false;
+
+            uint32 rank = ResolveHighestKnownRank(bot, spellId);
+            if (!rank)
+                return false;
+
+            bot->CastSpell(castTarget, rank, false);
+            _castAttemptCooldownMs = kCastAttemptCooldownMs;
+            return true;
         }
 
         static bool IsInTankMode(Player* bot)

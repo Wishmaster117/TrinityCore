@@ -10,6 +10,7 @@
 #ifndef PLAYERBOTS_MANAGER_H
 #define PLAYERBOTS_MANAGER_H
 
+#include "ObjectGuid.h"
 #include "Define.h"
 #include <cstdint>
 

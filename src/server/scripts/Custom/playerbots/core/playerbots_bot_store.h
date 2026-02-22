@@ -10,6 +10,8 @@
 #ifndef PLAYERBOTS_BOT_STORE_H
 #define PLAYERBOTS_BOT_STORE_H
 
+class Player;
+
 #include "Define.h"
 #include "ObjectGuid.h"
 

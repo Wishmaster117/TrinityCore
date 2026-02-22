@@ -10,6 +10,8 @@
 #include "ScriptMgr.h"
 
 #include "Chat.h"
+#include "ChatCommandTags.h"
+#include "ChatCommand.h"
 #include "DatabaseEnv.h"
 #include "fmt/format.h"
 #include "Player.h"
@@ -50,15 +52,15 @@ namespace Playerbots
         {
             static ChatCommandTable pbCommandTable =
             {
-                { "spawn",       rbac::RBAC_PERM_COMMAND_GM, true,  &HandleSpawn,       "" },
-                { "spawnrandom", rbac::RBAC_PERM_COMMAND_GM, true,  &HandleSpawnRandom, "" },
-                { "goto",        rbac::RBAC_PERM_COMMAND_GM, true,  &HandleGoto,        "" },
-                { "where",       rbac::RBAC_PERM_COMMAND_GM, true,  &HandleWhere,       "" },
+                { "spawn",       HandleSpawn,       rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
+                { "spawnrandom", HandleSpawnRandom, rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
+                { "goto",        HandleGoto,        rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
+                { "where",       HandleWhere,       rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
             };
 
             static ChatCommandTable commandTable =
             {
-                { "pb", rbac::RBAC_PERM_COMMAND_GM, true, nullptr, "", pbCommandTable },
+                { "pb", pbCommandTable },
             };
 
             return commandTable;

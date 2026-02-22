@@ -4105,6 +4105,7 @@ Logger.scripts.hotswap=3,Console Server
 Logger.sql.sql=5,Console DBErrors
 Logger.sql.updates=3,Console Server
 Logger.mmaps=3,Server
+Logger.playerbots=3,Console Server
 
 #Logger.addon=3,Console Server
 #Logger.ahbot=3,Console Server
@@ -4527,4 +4528,93 @@ Playerbots.RandomBots.AutoSpawnBatchPerTick = 10
 #
 # Default: empty (no restriction)
 #
+
 Playerbots.RandomBots.AutoSpawnForbiddenMaps = 1676,1481,1822
+
+# Playerbots.RandomBots.Level1.UseNPEChancePct
+#   Chance (in percent) for level 1 random bots to start in the NPE (Exile's Reach),
+#   if the core provides an NPE start for the chosen race/class (PlayerInfo::createPositionNPE).
+#   0 = never, 100 = always.
+
+Playerbots.RandomBots.Level1.UseNPEChancePct = 0
+
+# Playerbots.RandomBots.Level1.AllowNPE
+#   Hard toggle for NPE usage for level 1 random bots.
+#   0 = never allow NPE (always use normal starting experience),
+#   1 = allow NPE and apply Level1.UseNPEChancePct.
+#   Default: 0
+
+Playerbots.RandomBots.Level1.AllowNPE = 0
+
+# Off-tank peel behavior:
+# When the master is in tank-mode (MT) and an off-tank bot is available, the OT will start peeling
+# adds that attack healer/DPS only if the MT is currently holding at least N mobs.
+#
+# 1..10 (clamped). Recommended:
+# - 3 for dungeons (less aggressive)
+# - 2 for raids (more reactive)
+
+###################################################################################################
+# PLAYERBOTS.ROTATIONS (CLASS TUNING)
+#
+# These toggles control a conservative fallback for spellbook-driven rotations (no hardcoded SpellIDs).
+# When enabled, if the bot's current specialization school has no suitable "safe filler" spell available,
+# the rotation may fall back to a safe filler from another school.
+#
+# This is intended to keep bots functional across different talent/starter-build setups and expansions,
+# while still preferring spec-aligned spells whenever possible.
+###################################################################################################
+
+#
+# Playerbots.Rotations.Mage.AllowAnySchoolFallback
+#     Description: Allow Mage rotations to fall back to a safe filler from any school if the current spec
+#                  school has no suitable safe filler.
+#     Default:     1
+#     Values:      0 - Strict rotation (no fallback).
+#                  1 - Enable conservative fallback (recommended).
+#
+Playerbots.Rotations.Mage.AllowAnySchoolFallback = 1
+
+#
+# Playerbots.Rotations.Warlock.AllowAnySchoolFallback
+#     Description: Allow Warlock rotations to fall back to a safe filler from any school if the current spec
+#                  school has no suitable safe filler.
+#     Default:     1
+#     Values:      0 - Strict rotation (no fallback).
+#                  1 - Enable conservative fallback (recommended).
+#
+Playerbots.Rotations.Warlock.AllowAnySchoolFallback = 1
+
+###################################################################################################
+# PLAYERBOTS.NONCOMBAT (EAT/DRINK)
+#
+# Non-combat behaviors are designed to look "human-like":
+# - only out of combat
+# - do not eat/drink if hostile units are close
+# - will only use real consumables found in the bot inventory
+###################################################################################################
+
+#
+# Playerbots.NonCombat.EatHpPct
+#     Description: Start eating when Health % is below this threshold (if food is available).
+#     Default:     65
+#     Range:       1..99
+#
+Playerbots.NonCombat.EatHpPct = 65
+
+#
+# Playerbots.NonCombat.DrinkManaPct
+#     Description: Start drinking when Mana % is below this threshold (if drink is available).
+#     Note:        Only applies to mana users.
+#     Default:     35
+#     Range:       1..99
+#
+Playerbots.NonCombat.DrinkManaPct = 35
+
+#
+# Playerbots.NonCombat.EatDrink.SafeEnemyRadius
+#     Description: Do not eat/drink if hostile units are within this radius (yards).
+#     Default:     30.0
+#     Range:       5.0..80.0
+#
+Playerbots.NonCombat.EatDrink.SafeEnemyRadius = 30.0

@@ -2,25 +2,22 @@
 #define PLAYERBOTS_AI_COMBAT_CLASSES_WARLOCK_WARLOCKNONCOMBATROTATION_H
 
 #include "playerbots/ai/combat/rotations/INonCombatRotation.h"
-#include "playerbots/ai/combat/rotations/RotationContext.h"
 
 namespace Playerbots::AI::Combat::Rotations
 {
+    struct RotationContext;
+
     class WarlockNonCombatRotation final : public INonCombatRotation
     {
     public:
-        static WarlockNonCombatRotation& Instance()
-        {
-            static WarlockNonCombatRotation s;
-            return s;
-        }
+        static WarlockNonCombatRotation& Instance();
 
         char const* Name() const override { return "WarlockNonCombatRotation"; }
 
-        uint32 SelectSpell(RotationContext const& /*ctx*/) override
-        {
-            return 0;
-        }
+        uint32 SelectSpell(RotationContext const& ctx) override;
+
+    private:
+        WarlockNonCombatRotation() = default;
     };
 }
 

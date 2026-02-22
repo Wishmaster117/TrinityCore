@@ -24,9 +24,9 @@
 #include "DB2Stores.h"
 #include "Duration.h"
 #include "MotionMaster.h"
+#include "SharedDefines.h"
 #include "Player.h"
 #include "Realm/ClientBuildInfo.h"
-#include "SharedDefines.h"
 #include "World.h"
 #include "WorldSession.h"
 #include "WorldSocket.h"
@@ -229,6 +229,71 @@ namespace Playerbots::RandomBots
                 "SELECT 1 FROM characters WHERE name='{}' LIMIT 1",
                 escaped).c_str());
             return r != nullptr;
+        }
+
+        static ChrSpecializationEntry const* PickRandomSpecializationForClass(uint8 cls)
+        {
+            if (cls == CLASS_NONE)
+                return nullptr;
+
+            std::vector<ChrSpecializationEntry const*> specs;
+            specs.reserve(4);
+
+            for (ChrSpecializationEntry const* chrSpec : sChrSpecializationStore)
+            {
+                if (!chrSpec)
+                    continue;
+
+                // Player specs only (no pet specs), and only real specializations for the class.
+                if (chrSpec->IsPetSpecialization())
+                    continue;
+
+                if (chrSpec->ClassID != cls)
+                    continue;
+
+                // Defensive: OrderIndex should be within specialization slots, but avoid negative indices just in case.
+                if (chrSpec->OrderIndex < 0)
+                    continue;
+
+                specs.push_back(chrSpec);
+            }
+
+            if (specs.empty())
+                return nullptr;
+
+            return specs[urand(0, uint32(specs.size() - 1))];
+        }
+
+        static bool ApplyRandomSpecAndStarterBuild(Player& player)
+        {
+            // Config toggles (MVP defaults ON).
+            if (!sConfigMgr->GetBoolDefault("Playerbots.RandomBots.RandomizeSpecialization", true))
+                return false;
+
+            bool useStarterBuild = sConfigMgr->GetBoolDefault("Playerbots.RandomBots.Traits.UseStarterBuild", true);
+
+            ChrSpecializationEntry const* specEntry = PickRandomSpecializationForClass(player.GetClass());
+            if (!specEntry)
+                return false;
+
+            // IMPORTANT:
+            // - ActivateTalentGroup() performs DB writes for actions and expects the character row to exist already.
+            // - Therefore this helper must be called AFTER the initial SaveToDB() that creates the character row.
+            player.ActivateTalentGroup(specEntry);
+
+            if (!useStarterBuild)
+                return true;
+
+            int32 activeConfigId = player.GetActiveCombatTraitConfigID();
+            if (!activeConfigId)
+                return true;
+
+            // Ensure the active combat trait config uses the starter build.
+            // Re-apply to guarantee the starter selection is materialized into learned spells/traits.
+            player.SetTraitConfigUseStarterBuild(activeConfigId, true);
+            player.ApplyTraitConfig(activeConfigId, false);
+            player.ApplyTraitConfig(activeConfigId, true);
+            return true;
         }
 
         static bool CharacterGuidExists(ObjectGuid::LowType guidLow)
@@ -799,6 +864,28 @@ namespace Playerbots::RandomBots
                 return false;
             }
 
+            // --------------------------------------------------------------------
+            // Specialization + Traits (starter build) for bots (MVP)
+            //
+            // We do it AFTER the initial SaveToDB() because ActivateTalentGroup()
+            // saves action buttons and expects the character row to already exist.
+            // Then we persist the new spec/traits with a second SaveToDB().
+            // --------------------------------------------------------------------
+            bool changedSpecOrTraits = false;
+            if (ApplyRandomSpecAndStarterBuild(*newChar))
+                changedSpecOrTraits = true;
+
+            if (changedSpecOrTraits)
+            {
+                CharacterDatabaseTransaction characterTransaction2 = CharacterDatabase.BeginTransaction();
+                LoginDatabaseTransaction loginTransaction2 = LoginDatabase.BeginTransaction();
+
+                newChar->SaveToDB(loginTransaction2, characterTransaction2, true);
+
+                CharacterDatabase.CommitTransaction(characterTransaction2);
+                LoginDatabase.CommitTransaction(loginTransaction2);
+            }
+
             // Optional relocation for non-level-1 bots (controlled by spawn hubs table).
             if (level > 1)
             {
@@ -854,6 +941,10 @@ namespace Playerbots::RandomBots
             TC_LOG_INFO("server.loading", "Playerbots.RandomBots: created char '{}' acc={} guid={} race={} class={} sex={} level={} createMode={} customizations={}",
                 newChar->GetName(), accountId, newChar->GetGUID().ToString(), uint32(race), uint32(cls), uint32(sex), uint32(newChar->GetLevel()),
                 uint32(newChar->GetCreateMode()), uint32(createInfo->Customizations.size()));
+
+            // Note: spec/traits are already applied above (and persisted if enabled).
+            // We intentionally do not log spec id here to avoid relying on DB2 ids in logs;
+            // if you want it, we can add a debug config toggle later.
 
             return true;
         }

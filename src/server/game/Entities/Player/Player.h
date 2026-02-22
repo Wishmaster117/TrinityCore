@@ -1994,6 +1994,10 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void DeleteTraitConfig(int32 deletedConfigId);
         void ApplyTraitConfig(int32 configId, bool apply);
         void ApplyTraitEntry(int32 traitNodeEntryId, int32 rank, int32 grantedRanks, bool apply);
+
+        // Exposed for scripts/modules (playerbots bootstrap/rotations) to safely operate on the active combat trait config.
+        int32 GetActiveCombatTraitConfigID() const { return m_activePlayerData->ActiveCombatTraitConfigID; }
+
         void SetActiveCombatTraitConfigID(int32 traitConfigId) { SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ActiveCombatTraitConfigID), traitConfigId); }
         void SetCurrentCombatTraitConfigSubTreeID(int32 traitSubTreeId) { SetUpdateFieldValue(m_values.ModifyValue(&Player::m_playerData).ModifyValue(&UF::PlayerData::CurrentCombatTraitConfigSubTreeID), traitSubTreeId); }
         void SetTraitConfigUseStarterBuild(int32 traitConfigId, bool useStarterBuild);

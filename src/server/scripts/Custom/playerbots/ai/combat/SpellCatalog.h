@@ -1,7 +1,9 @@
 #ifndef PLAYERBOTS_AI_COMBAT_SPELLCATALOG_H
 #define PLAYERBOTS_AI_COMBAT_SPELLCATALOG_H
 
+#include "Map.h"
 #include "Player.h"
+#include "SharedDefines.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 
@@ -28,6 +30,8 @@ namespace Playerbots::AI::Combat
             _cc.clear();
             _taunts.clear();
             _knownSpellCount = 0;
+            _knownUsableSpellCount = 0;
+            _difficulty = Difficulty(0);
         }
 
         void Build(Player* bot)
@@ -36,14 +40,17 @@ namespace Playerbots::AI::Combat
             if (!bot || !bot->GetMap())
                 return;
 
-            Difficulty difficulty = Difficulty(bot->GetMap()->GetDifficultyID());
+            _difficulty = Difficulty(bot->GetMap()->GetDifficultyID());
+            _knownUsableSpellCount = 0;
 
             for (auto const& [spellId, data] : bot->GetSpellMap())
             {
                 if (data.state == PLAYERSPELL_REMOVED || data.disabled)
                     continue;
 
-                SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, difficulty);
+                ++_knownUsableSpellCount;
+
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, _difficulty);
                 if (!info)
                     continue;
 
@@ -79,10 +86,10 @@ namespace Playerbots::AI::Combat
 
             _knownSpellCount = uint32(bot->GetSpellMap().size());
 
-            auto sortOffensive = [bot, difficulty](uint32 a, uint32 b)
+            auto sortOffensive = [bot, this](uint32 a, uint32 b)
             {
-                SpellInfo const* ia = sSpellMgr->GetSpellInfo(a, difficulty);
-                SpellInfo const* ib = sSpellMgr->GetSpellInfo(b, difficulty);
+                SpellInfo const* ia = sSpellMgr->GetSpellInfo(a, _difficulty);
+                SpellInfo const* ib = sSpellMgr->GetSpellInfo(b, _difficulty);
                 if (!ia || !ib)
                     return a < b;
 
@@ -99,10 +106,10 @@ namespace Playerbots::AI::Combat
                 return a < b;
             };
 
-            auto sortHeals = [bot, difficulty](uint32 a, uint32 b)
+            auto sortHeals = [bot, this](uint32 a, uint32 b)
             {
-                SpellInfo const* ia = sSpellMgr->GetSpellInfo(a, difficulty);
-                SpellInfo const* ib = sSpellMgr->GetSpellInfo(b, difficulty);
+                SpellInfo const* ia = sSpellMgr->GetSpellInfo(a, _difficulty);
+                SpellInfo const* ib = sSpellMgr->GetSpellInfo(b, _difficulty);
                 if (!ia || !ib)
                     return a < b;
 
@@ -133,7 +140,23 @@ namespace Playerbots::AI::Combat
 
         bool NeedsRebuild(Player* bot) const
         {
-            return !bot || _knownSpellCount != uint32(bot->GetSpellMap().size());
+            if (!bot)
+                return true;
+
+            // Size change = definitely rebuild.
+            if (_knownSpellCount != uint32(bot->GetSpellMap().size()))
+                return true;
+
+            // Also rebuild if usability changed without size changing (disabled/removed toggles).
+            uint32 usable = 0;
+            for (auto const& [spellId, data] : bot->GetSpellMap())
+            {
+                if (data.state == PLAYERSPELL_REMOVED || data.disabled)
+                    continue;
+                ++usable;
+            }
+
+            return usable != _knownUsableSpellCount;
         }
 
         std::vector<uint32> const& GetOffensive() const { return _offensive; }
@@ -162,6 +185,232 @@ namespace Playerbots::AI::Combat
         uint32 OffensiveCount() const { return uint32(_offensive.size()); }
         uint32 HealCount() const { return uint32(_heals.size()); }
 
+        // Shared helper: aura presence across spell chain (centralized here to avoid duplication).
+        bool TargetHasAuraFromSpellChain(Unit* target, uint32 spellId) const
+        {
+            if (!target || !spellId)
+                return false;
+
+            uint32 first = sSpellMgr->GetFirstSpellInChain(spellId);
+            if (!first)
+                first = spellId;
+
+            for (uint32 id = first; id; id = sSpellMgr->GetNextSpellInChain(id))
+            {
+                if (target->HasAura(id))
+                    return true;
+            }
+            return false;
+        }
+
+        // 3.4: Spellbook-driven non-combat helper:
+        // Pick a missing self-only buff (armor-like) without hardcoded IDs.
+        //
+        // Heuristic:
+        // - must be in the Buff bucket
+        // - must be self-only (max range <= 0)
+        // - must apply an aura (already ensured by buff classification)
+        // - must NOT already be present on the bot (spell chain aware)
+        uint32 BestMissingSelfOnlyBuff(Player* bot) const
+        {
+            if (!bot || _buffs.empty() || !_difficulty)
+                return 0;
+
+            for (uint32 id : _buffs)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(id, _difficulty);
+                if (!info)
+                    continue;
+
+                // Ensure it is a usable buff (positive, aura apply, not heal/dispel).
+                if (!SpellClassifier::IsUsableBuffSpell(info, bot))
+                    continue;
+
+                // Self-only (armor-style) buff.
+                float range = info->GetMaxRange(true, bot, nullptr);
+                if (range > 0.0f)
+                    continue;
+
+                if (TargetHasAuraFromSpellChain(bot, id))
+                    continue;
+
+                return id;
+            }
+
+            return 0;
+        }
+
+        // 3.4 FINAL: spellbook-driven non-combat helper:
+        // Pick a missing "group-style" buff (range > 0) for a specific target (master).
+        // No hardcoded IDs; conservative gating is done by caller (non-combat rotation).
+        uint32 BestMissingGroupBuffForTarget(Player* bot, Unit* target) const
+        {
+            if (!bot || !target || _buffs.empty() || !_difficulty)
+                return 0;
+
+            for (uint32 id : _buffs)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(id, _difficulty);
+                if (!info)
+                    continue;
+
+                if (!SpellClassifier::IsUsableBuffSpell(info, bot))
+                    continue;
+
+                // Group/targetable buff: range > 0 (self-only armors already handled elsewhere).
+                float range = info->GetMaxRange(true, bot, nullptr);
+                if (range <= 0.0f)
+                    continue;
+
+                // Avoid rebuffing if already present (spell chain aware).
+                if (TargetHasAuraFromSpellChain(target, id))
+                    continue;
+
+                return id;
+            }
+
+            return 0;
+        }
+
+        // Spellbook-driven: best safe instant nuke (direct damage) by school.
+        uint32 BestInstantNukeBySchool(Player* bot, SpellSchoolMask schoolMask) const
+        {
+            if (!bot || _offensive.empty())
+                return 0;
+
+            for (uint32 id : _offensive)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(id, _difficulty);
+                if (SpellClassifier::IsSafeRangedSingleTargetInstantNuke(info, bot, schoolMask))
+                    return id;
+            }
+            return 0;
+        }
+
+        // Spellbook-driven: best safe single-target DoT by school.
+        // We prefer instant DoTs first, then cast-time DoTs.
+        uint32 BestSingleTargetDotBySchool(Player* bot, SpellSchoolMask schoolMask) const
+        {
+            if (!bot || _offensive.empty())
+                return 0;
+
+            for (uint32 id : _offensive)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(id, _difficulty);
+                if (SpellClassifier::IsSafeRangedSingleTargetDot(info, bot, schoolMask) && info->CalcCastTime() == 0)
+                    return id;
+            }
+
+            for (uint32 id : _offensive)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(id, _difficulty);
+                if (SpellClassifier::IsSafeRangedSingleTargetDot(info, bot, schoolMask) && info->CalcCastTime() != 0)
+                    return id;
+            }
+            return 0;
+        }
+
+        // Spellbook-driven: best safe AOE spell by school (or any school when mask == NONE).
+        uint32 BestAoeBySchool(Player* bot, SpellSchoolMask schoolMask) const
+        {
+            if (!bot || _aoe.empty())
+                return 0;
+
+            for (uint32 id : _aoe)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(id, _difficulty);
+                if (SpellClassifier::IsSafeAoeOffensiveSpell(info, bot, schoolMask))
+                    return id;
+            }
+            return 0;
+        }
+
+        // Spellbook-driven selection helpers (MVP, no hardcoded SpellIDs).
+        // Picks a ranged, single-target direct-damage spell matching the requested school.
+        // Heuristic:
+        //  - pass 1: prefer cast-time nukes (Fireball/Frostbolt/Arcane Blast-like)
+        //  - pass 2: fallback to instant direct-damage (proc/finisher-like)
+        uint32 BestSingleTargetNukeBySchool(Player* bot, SpellSchoolMask schoolMask) const
+        {
+            if (!bot || _offensive.empty())
+                return 0;
+
+            auto safeInstant = [this, bot, schoolMask](uint32 spellId) -> bool
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, _difficulty);
+                if (!info)
+                    return false;
+
+                // Conservative instant fallback: still avoid cooldowns and channels.
+                if (!SpellClassifier::IsSafeRangedSingleTargetDirectDamage(info, bot, schoolMask))
+                    return false;
+
+                if (info->IsChanneled())
+                    return false;
+
+                if (info->CalcCastTime() != 0)
+                    return false;
+
+                // Avoid picking burst/utility instants as fillers.
+                if (SpellClassifier::HasAnyCooldown(info))
+                    return false;
+
+                return true;
+            };
+
+            auto safeOffensiveCastTime = [this, bot, schoolMask](uint32 spellId) -> bool
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, _difficulty);
+                if (!info)
+                    return false;
+
+                if (!SpellClassifier::IsSafeRangedSingleTargetOffensive(info, bot, schoolMask))
+                    return false;
+
+                // Prefer cast-time fillers first in this pass.
+                return (info->CalcCastTime() != 0);
+            };
+
+            auto safeOffensiveInstant = [this, bot, schoolMask](uint32 spellId) -> bool
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, _difficulty);
+                if (!info)
+                    return false;
+
+                if (!SpellClassifier::IsSafeRangedSingleTargetOffensive(info, bot, schoolMask))
+                    return false;
+
+                return (info->CalcCastTime() == 0);
+            };
+
+            // Prefer "core nukes" (cast-time, no cooldown, not channeled, etc.).
+            for (uint32 id : _offensive)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(id, _difficulty);
+                if (SpellClassifier::IsLikelyCoreNuke(info, bot, schoolMask))
+                    return id;
+            }
+
+            // Fallback to safe instant direct damage (still conservative).
+            for (uint32 id : _offensive)
+                if (safeInstant(id))
+                    return id;
+
+            // 3.3.5: last-resort filler (still safe):
+            // ranged single-target offensive spell (direct damage OR DoT),
+            // no AoE targeting, no channel, no cooldown.
+            // Prefer cast-time first, then instant.
+            for (uint32 id : _offensive)
+                if (safeOffensiveCastTime(id))
+                    return id;
+
+            for (uint32 id : _offensive)
+                if (safeOffensiveInstant(id))
+                    return id;
+
+            return 0;
+        }
+
     private:
         std::vector<uint32> _offensive;
         std::vector<uint32> _melee;
@@ -173,6 +422,8 @@ namespace Playerbots::AI::Combat
         std::vector<uint32> _cc;
         std::vector<uint32> _taunts;
         uint32 _knownSpellCount = 0;
+        uint32 _knownUsableSpellCount = 0;
+        Difficulty _difficulty = Difficulty(0);
     };
 }
 

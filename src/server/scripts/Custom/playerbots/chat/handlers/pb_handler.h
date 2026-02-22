@@ -10,6 +10,7 @@
 #ifndef PLAYERBOTS_PB_HANDLER_H
 #define PLAYERBOTS_PB_HANDLER_H
 
+#include "Define.h"
 #include "playerbots/chat/command_parser.h"
 
 class Player;

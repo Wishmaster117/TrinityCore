@@ -2,6 +2,7 @@
 
 #include "playerbots/ai/combat/rotations/ICombatRotation.h"
 #include "playerbots/ai/combat/rotations/INonCombatRotation.h"
+#include "playerbots/ai/combat/rotations/GenericNonCombatRotation.h"
 
 // Combat/Non-combat rotations per class (implementation files)
 #include "playerbots/ai/combat/classes/deathknight/DeathKnightCombatRotation.h"
@@ -71,7 +72,7 @@ namespace Playerbots::AI::Combat::Rotations
             case CLASS_SHAMAN:       return &ShamanNonCombatRotation::Instance();
             case CLASS_WARLOCK:      return &WarlockNonCombatRotation::Instance();
             case CLASS_WARRIOR:      return &WarriorNonCombatRotation::Instance();
-            default:                 return nullptr;
+            default:                 return &GenericNonCombatRotation::Instance();
         }
     }
 }
