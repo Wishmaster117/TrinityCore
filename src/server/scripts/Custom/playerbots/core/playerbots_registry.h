@@ -11,6 +11,8 @@
 #define PLAYERBOTS_REGISTRY_H
 
 #include "Define.h"
+#include "Entities/Object/ObjectGuid.h"
+
 #include <unordered_map>
 
 class Unit;

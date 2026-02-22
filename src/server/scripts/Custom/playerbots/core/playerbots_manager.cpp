@@ -38,7 +38,8 @@ namespace Playerbots
 
     static float _followDistance = 10.0f;
     static float _followAngle = 0.0f;
-    static float _stopDistanceFactor = 0.80f; // hysteresis: stop when <= followDist*factor
+    //static float _stopDistanceFactor = 0.80f; // hysteresis: stop when <= followDist*factor
+	[[maybe_unused]] static float _stopDistanceFactor = 0.80f; // hysteresis: stop when <= followDist*factor
 
     static uint32 _commandMinIntervalMs = 250;
 

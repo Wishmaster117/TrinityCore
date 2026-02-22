@@ -9,6 +9,7 @@
 #define PLAYERBOTS_FOLLOW_CONTROLLER_H
 
 #include <cstdint>
+#include "Define.h"
 
 class Player;
 
